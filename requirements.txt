@@ -5,3 +5,4 @@ pydantic
 python-dotenv
 pymupdf
 google-genai
+python-multipart
