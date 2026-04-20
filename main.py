@@ -86,12 +86,15 @@ async def create_character(req: CreateCharacterRequest):
     Descrição do jogador: {req.description}
     Contexto da campanha: {req.campaign_context or 'Nenhum'}
 
-    Calcule os stats de combate corretamente baseado na classe, raça, nível e atributos.
-    HP = dado de vida da classe × nível + modificador de CON × nível (nível 1 = máximo do dado)
-    CA = base da armadura + modificador de DEX (se aplicável)
-    Iniciativa = modificador de DEX
-    Percepção passiva = 10 + modificador de Sabedoria + bônus de proficiência (se proficiente)
-    Bônus de proficiência = baseado no nível
+    **OBRIGATÓRIO**: Sempre inclua o objeto "combat" com todos os campos abaixo calculados corretamente:
+    - hp e hp_max (baseado na classe + modificador de CON)
+    - ac (Classe de Armadura)
+    - initiative
+    - speed
+    - proficiency_bonus
+    - passive_perception
+    - hit_dice
+    - saving_throws (para os 6 atributos)
 
     Retorne APENAS um JSON válido com esta estrutura exata:
     {{
@@ -101,19 +104,19 @@ async def create_character(req: CreateCharacterRequest):
       "level": 1,
       "alignment": "...",
       "background": "...",
-      "attributes": {{ "str": 10, "dex": 15, "con": 12, "int": 8, "wis": 13, "cha": 10 }},
+      "attributes": {{ "str": 10, "dex": 15, "con": 14, "int": 8, "wis": 16, "cha": 8 }},
       "combat": {{
-        "hp": 10,
-        "hp_max": 10,
-        "ac": 13,
-        "initiative": 2,
+        "hp": 0,
+        "hp_max": 0,
+        "ac": 0,
+        "initiative": 0,
         "speed": 30,
         "proficiency_bonus": 2,
-        "passive_perception": 13,
-        "saving_throws": {{ "str": 0, "dex": 4, "con": 1, "int": -1, "wis": 1, "cha": 0 }},
-        "hit_dice": "1d8"
+        "passive_perception": 0,
+        "hit_dice": "1d8",
+        "saving_throws": {{ "str": 0, "dex": 0, "con": 0, "int": 0, "wis": 0, "cha": 0 }}
       }},
-      "skills": {{ "acrobatics": 5, "stealth": 3 }},
+      "skills": {{ "acrobatics": 5, "stealth": 3, ... }},
       "inventory": ["item1", "item2"],
       "features": ["feature1", "feature2"],
       "background_story": "História curta..."
@@ -121,6 +124,7 @@ async def create_character(req: CreateCharacterRequest):
     """
     try:
         ficha = gerar_json_com_gemini(prompt)
+
         insert_data = {
             "name": ficha.get("name", "Sem nome"),
             "system": req.system,
@@ -132,6 +136,7 @@ async def create_character(req: CreateCharacterRequest):
             insert_data["campaign_id"] = req.campaign_id
 
         response = supabase.table("characters").insert(insert_data).execute()
+
         return {
             "success": True,
             "data": ficha,
