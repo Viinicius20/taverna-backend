@@ -66,6 +66,16 @@ def gerar_json_com_gemini(prompt: str) -> dict:
     return json.loads(text)
 
 
+def extrair_texto_pdf(contents: bytes) -> str:
+    """Extrai texto de um PDF em bytes"""
+    doc = fitz.open(stream=contents, filetype="pdf")
+    text = ""
+    for page_num, page in enumerate(doc):
+        text += f"\n--- PÁGINA {page_num + 1} ---\n"
+        text += page.get_text("text")
+    return text
+
+
 # ===================== ENDPOINTS =====================
 
 @app.post("/create-character")
@@ -124,7 +134,6 @@ async def update_character(character_id: str, req: UpdateCharacterRequest):
             update_data["name"] = req.name
         if req.system:
             update_data["system"] = req.system
-
         response = supabase.table("characters").update(update_data).eq("id", character_id).execute()
         return {"success": True, "data": response.data}
     except Exception as e:
@@ -155,8 +164,8 @@ async def level_up(req: LevelUpRequest):
     Atributos atuais: {json.dumps(ficha.get("attributes", {}))}
     Perícias atuais: {json.dumps(ficha.get("skills", {}))}
 
-    Atualize a ficha para o nível {req.nivel_alvo}. Adicione APENAS as novas features, 
-    melhorias de atributos e benefícios que o personagem ganha do nível {nivel_atual + 1} 
+    Atualize a ficha para o nível {req.nivel_alvo}. Adicione APENAS as novas features,
+    melhorias de atributos e benefícios que o personagem ganha do nível {nivel_atual + 1}
     até o nível {req.nivel_alvo}. Mantenha tudo que já existe.
 
     Retorne APENAS um JSON válido com a ficha COMPLETA atualizada:
@@ -176,13 +185,10 @@ async def level_up(req: LevelUpRequest):
     """
     try:
         ficha_nova = gerar_json_com_gemini(prompt)
-
-        # Salva no Supabase
         supabase.table("characters").update({
             "data": ficha_nova,
             "name": ficha_nova.get("name", ficha.get("name"))
         }).eq("id", req.character_id).execute()
-
         return {"success": True, "data": ficha_nova}
     except Exception as e:
         raise HTTPException(500, f"Erro ao subir de nível: {str(e)}")
@@ -190,7 +196,7 @@ async def level_up(req: LevelUpRequest):
 
 @app.post("/upload-pdf")
 async def upload_pdf(file: UploadFile = File(...), system: str = "D&D 5e", user_id: str = "", campaign_id: str = ""):
-    """Importa ficha PDF e salva no Supabase"""
+    """Importa ficha PDF e salva como PERSONAGEM no Supabase"""
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(400, "Arquivo deve ser PDF")
 
@@ -198,12 +204,7 @@ async def upload_pdf(file: UploadFile = File(...), system: str = "D&D 5e", user_
     if not contents:
         raise HTTPException(400, "PDF está vazio ou corrompido")
 
-    doc = fitz.open(stream=contents, filetype="pdf")
-    text = ""
-    for page_num, page in enumerate(doc):
-        text += f"\n--- PÁGINA {page_num + 1} ---\n"
-        text += page.get_text("text")
-
+    text = extrair_texto_pdf(contents)
     if not text.strip():
         raise HTTPException(400, "Não foi possível extrair texto do PDF")
 
@@ -249,6 +250,66 @@ async def upload_pdf(file: UploadFile = File(...), system: str = "D&D 5e", user_
             "data": ficha,
             "saved_id": response.data[0]["id"] if response.data else None,
             "message": "Ficha extraída e salva com sucesso!"
+        }
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao processar PDF: {str(e)}")
+
+
+@app.post("/upload-pdf-npc")
+async def upload_pdf_npc(file: UploadFile = File(...), system: str = "D&D 5e", campaign_id: str = ""):
+    """Importa ficha PDF e salva como NPC no Supabase — sem criar personagem"""
+    if not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(400, "Arquivo deve ser PDF")
+
+    contents = await file.read()
+    if not contents:
+        raise HTTPException(400, "PDF está vazio ou corrompido")
+
+    text = extrair_texto_pdf(contents)
+    if not text.strip():
+        raise HTTPException(400, "Não foi possível extrair texto do PDF")
+
+    prompt = f"""
+    Extraia TODOS os dados da ficha de RPG do texto abaixo e organize como NPC.
+    Sistema do jogo: {system}
+
+    Retorne APENAS um JSON com esta estrutura:
+    {{
+      "name": "...",
+      "race": "...",
+      "class": "...",
+      "level": 1,
+      "alignment": "...",
+      "background": "...",
+      "occupation": "...",
+      "personality": "...",
+      "motivation": "...",
+      "appearance": "...",
+      "attributes": {{ "str": 10, "dex": 18, "con": 14, "int": 8, "wis": 16, "cha": 8 }},
+      "skills": {{ "acrobatics": 7, "stealth": 9 }},
+      "inventory": ["item1", "item2"],
+      "features": ["feature1", "feature2"],
+      "background_story": "..."
+    }}
+
+    Texto da ficha:
+    {text[:25000]}
+    """
+
+    try:
+        dados = gerar_json_com_gemini(prompt)
+
+        response = supabase.table("npcs").insert({
+            "campaign_id": campaign_id,
+            "name": dados.get("name", "NPC importado"),
+            "data": dados
+        }).execute()
+
+        return {
+            "success": True,
+            "data": dados,
+            "saved_id": response.data[0]["id"] if response.data else None,
+            "message": "NPC importado com sucesso!"
         }
     except Exception as e:
         raise HTTPException(500, f"Erro ao processar PDF: {str(e)}")
@@ -302,11 +363,12 @@ async def create_npc(campaign_id: str, description: str, system: str = "D&D 5e")
       "race": "...",
       "occupation": "...",
       "personality": "...",
-      "secret": "...",
       "appearance": "...",
       "motivation": "...",
       "attributes": {{ "str": 10, "dex": 10, "con": 10, "int": 10, "wis": 10, "cha": 10 }},
-      "notes": "..."
+      "features": [],
+      "inventory": [],
+      "background_story": "..."
     }}
     """
     try:
@@ -319,6 +381,7 @@ async def create_npc(campaign_id: str, description: str, system: str = "D&D 5e")
         return {
             "success": True,
             "data": npc,
+            "id": response.data[0]["id"] if response.data else None,
             "saved_id": response.data[0]["id"] if response.data else None
         }
     except Exception as e:
