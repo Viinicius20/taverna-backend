@@ -67,7 +67,6 @@ def gerar_json_com_gemini(prompt: str) -> dict:
 
 
 def extrair_texto_pdf(contents: bytes) -> str:
-    """Extrai texto de um PDF em bytes"""
     doc = fitz.open(stream=contents, filetype="pdf")
     text = ""
     for page_num, page in enumerate(doc):
@@ -80,13 +79,19 @@ def extrair_texto_pdf(contents: bytes) -> str:
 
 @app.post("/create-character")
 async def create_character(req: CreateCharacterRequest):
-    """Cria personagem do zero com IA e salva no Supabase"""
     prompt = f"""
     Você é um mestre experiente de RPG. Crie uma ficha completa e equilibrada.
 
     Sistema: {req.system}
     Descrição do jogador: {req.description}
     Contexto da campanha: {req.campaign_context or 'Nenhum'}
+
+    Calcule os stats de combate corretamente baseado na classe, raça, nível e atributos.
+    HP = dado de vida da classe × nível + modificador de CON × nível (nível 1 = máximo do dado)
+    CA = base da armadura + modificador de DEX (se aplicável)
+    Iniciativa = modificador de DEX
+    Percepção passiva = 10 + modificador de Sabedoria + bônus de proficiência (se proficiente)
+    Bônus de proficiência = baseado no nível
 
     Retorne APENAS um JSON válido com esta estrutura exata:
     {{
@@ -97,6 +102,17 @@ async def create_character(req: CreateCharacterRequest):
       "alignment": "...",
       "background": "...",
       "attributes": {{ "str": 10, "dex": 15, "con": 12, "int": 8, "wis": 13, "cha": 10 }},
+      "combat": {{
+        "hp": 10,
+        "hp_max": 10,
+        "ac": 13,
+        "initiative": 2,
+        "speed": 30,
+        "proficiency_bonus": 2,
+        "passive_perception": 13,
+        "saving_throws": {{ "str": 0, "dex": 4, "con": 1, "int": -1, "wis": 1, "cha": 0 }},
+        "hit_dice": "1d8"
+      }},
       "skills": {{ "acrobatics": 5, "stealth": 3 }},
       "inventory": ["item1", "item2"],
       "features": ["feature1", "feature2"],
@@ -127,7 +143,6 @@ async def create_character(req: CreateCharacterRequest):
 
 @app.put("/characters/{character_id}")
 async def update_character(character_id: str, req: UpdateCharacterRequest):
-    """Atualiza ficha de um personagem existente"""
     try:
         update_data = {"data": req.data}
         if req.name:
@@ -142,7 +157,6 @@ async def update_character(character_id: str, req: UpdateCharacterRequest):
 
 @app.post("/level-up")
 async def level_up(req: LevelUpRequest):
-    """Sobe o nível do personagem com ajuda da IA"""
     ficha = req.ficha_atual
     nivel_atual = ficha.get("level", 1)
 
@@ -162,11 +176,9 @@ async def level_up(req: LevelUpRequest):
     Nível alvo: {req.nivel_alvo}
     Features atuais: {json.dumps(ficha.get("features", []))}
     Atributos atuais: {json.dumps(ficha.get("attributes", {}))}
-    Perícias atuais: {json.dumps(ficha.get("skills", {}))}
+    Combat atual: {json.dumps(ficha.get("combat", {}))}
 
-    Atualize a ficha para o nível {req.nivel_alvo}. Adicione APENAS as novas features,
-    melhorias de atributos e benefícios que o personagem ganha do nível {nivel_atual + 1}
-    até o nível {req.nivel_alvo}. Mantenha tudo que já existe.
+    Atualize a ficha para o nível {req.nivel_alvo}. Recalcule os stats de combate para o novo nível.
 
     Retorne APENAS um JSON válido com a ficha COMPLETA atualizada:
     {{
@@ -177,6 +189,17 @@ async def level_up(req: LevelUpRequest):
       "alignment": "{ficha.get("alignment")}",
       "background": "{ficha.get("background")}",
       "attributes": {{ "str": 10, "dex": 15, ... }},
+      "combat": {{
+        "hp": 0,
+        "hp_max": 0,
+        "ac": 0,
+        "initiative": 0,
+        "speed": 30,
+        "proficiency_bonus": 0,
+        "passive_perception": 0,
+        "saving_throws": {{ "str": 0, "dex": 0, "con": 0, "int": 0, "wis": 0, "cha": 0 }},
+        "hit_dice": "1d8"
+      }},
       "skills": {{ "acrobatics": 5, ... }},
       "inventory": [...],
       "features": [...todas as features antigas + novas...],
@@ -196,7 +219,6 @@ async def level_up(req: LevelUpRequest):
 
 @app.post("/upload-pdf")
 async def upload_pdf(file: UploadFile = File(...), system: str = "D&D 5e", user_id: str = "", campaign_id: str = ""):
-    """Importa ficha PDF e salva como PERSONAGEM no Supabase"""
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(400, "Arquivo deve ser PDF")
 
@@ -221,6 +243,17 @@ async def upload_pdf(file: UploadFile = File(...), system: str = "D&D 5e", user_
       "alignment": "...",
       "background": "...",
       "attributes": {{ "str": 10, "dex": 18, "con": 14, "int": 8, "wis": 16, "cha": 8 }},
+      "combat": {{
+        "hp": 0,
+        "hp_max": 0,
+        "ac": 0,
+        "initiative": 0,
+        "speed": 30,
+        "proficiency_bonus": 2,
+        "passive_perception": 0,
+        "saving_throws": {{ "str": 0, "dex": 0, "con": 0, "int": 0, "wis": 0, "cha": 0 }},
+        "hit_dice": "1d8"
+      }},
       "skills": {{ "acrobatics": 7, "stealth": 9 }},
       "inventory": ["item1", "item2"],
       "features": ["feature1", "feature2"],
@@ -257,7 +290,6 @@ async def upload_pdf(file: UploadFile = File(...), system: str = "D&D 5e", user_
 
 @app.post("/upload-pdf-npc")
 async def upload_pdf_npc(file: UploadFile = File(...), system: str = "D&D 5e", campaign_id: str = ""):
-    """Importa ficha PDF e salva como NPC no Supabase — sem criar personagem"""
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(400, "Arquivo deve ser PDF")
 
@@ -286,6 +318,16 @@ async def upload_pdf_npc(file: UploadFile = File(...), system: str = "D&D 5e", c
       "motivation": "...",
       "appearance": "...",
       "attributes": {{ "str": 10, "dex": 18, "con": 14, "int": 8, "wis": 16, "cha": 8 }},
+      "combat": {{
+        "hp": 0,
+        "hp_max": 0,
+        "ac": 0,
+        "initiative": 0,
+        "speed": 30,
+        "proficiency_bonus": 2,
+        "passive_perception": 0,
+        "hit_dice": "1d8"
+      }},
       "skills": {{ "acrobatics": 7, "stealth": 9 }},
       "inventory": ["item1", "item2"],
       "features": ["feature1", "feature2"],
@@ -298,7 +340,6 @@ async def upload_pdf_npc(file: UploadFile = File(...), system: str = "D&D 5e", c
 
     try:
         dados = gerar_json_com_gemini(prompt)
-
         response = supabase.table("npcs").insert({
             "campaign_id": campaign_id,
             "name": dados.get("name", "NPC importado"),
