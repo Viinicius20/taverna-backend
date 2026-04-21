@@ -307,37 +307,33 @@ async def upload_pdf_npc(file: UploadFile = File(...), system: str = "D&D 5e", c
         raise HTTPException(400, "Não foi possível extrair texto do PDF")
 
     prompt = f"""
-    Extraia TODOS os dados da ficha de RPG do texto abaixo e organize como NPC.
-    Sistema do jogo: {system}
+       Extraia TODOS os dados da ficha de RPG do texto abaixo e organize como NPC.
+       Sistema do jogo: {system}
 
-    Retorne APENAS um JSON com esta estrutura:
-    {{
-      "name": "...",
-      "race": "...",
-      "class": "...",
-      "level": 1,
-      "alignment": "...",
-      "background": "...",
-      "occupation": "...",
-      "personality": "...",
-      "motivation": "...",
-      "appearance": "...",
-      "attributes": {{ "str": 10, "dex": 18, "con": 14, "int": 8, "wis": 16, "cha": 8 }},
-      "combat": {{
-        "hp": 0,
-        "hp_max": 0,
-        "ac": 0,
-        "initiative": 0,
-        "speed": 30,
-        "proficiency_bonus": 2,
-        "passive_perception": 0,
-        "hit_dice": "1d8"
-      }},
-      "skills": {{ "acrobatics": 7, "stealth": 9 }},
-      "inventory": ["item1", "item2"],
-      "features": ["feature1", "feature2"],
-      "background_story": "..."
-    }}
+       Retorne APENAS um JSON com esta estrutura:
+       {{
+         "name": "...",
+         "race": "...",
+         "class": "...",
+         "level": 1,
+         "alignment": "...",
+         "background": "...",
+         "occupation": "...",
+         "personality": "...",
+         "motivation": "...",
+         "appearance": "...",
+         "attributes": {{ "str": 10, "dex": 18, "con": 14, "int": 8, "wis": 16, "cha": 8 }},
+         "combat": {{
+           "hp": 0,
+           "hp_max": 0,
+           "ac": 0,
+           "initiative": 0,
+           "speed": 30,
+           "proficiency_bonus": 2,
+           "passive_perception": 0,
+           "hit_dice": "1d8",
+           "saving_throws": {{ "str": 0, "dex": 0, "con": 0, "int": 0, "wis": 0, "cha": 0 }}
+         }},
 
     Texto da ficha:
     {text[:25000]}
@@ -403,6 +399,16 @@ async def create_npc(campaign_id: str, description: str, system: str = "D&D 5e")
     Sistema: {system}
     Descrição: {description}
 
+    **OBRIGATÓRIO**: Sempre inclua o objeto "combat" com todos os campos abaixo calculados corretamente:
+    - hp e hp_max (baseado na classe + modificador de CON)
+    - ac (Classe de Armadura)
+    - initiative
+    - speed
+    - proficiency_bonus
+    - passive_perception
+    - hit_dice
+    - saving_throws (para os 6 atributos)
+
     Retorne APENAS um JSON válido:
     {{
       "name": "...",
@@ -412,6 +418,17 @@ async def create_npc(campaign_id: str, description: str, system: str = "D&D 5e")
       "appearance": "...",
       "motivation": "...",
       "attributes": {{ "str": 10, "dex": 10, "con": 10, "int": 10, "wis": 10, "cha": 10 }},
+      "combat": {{
+        "hp": 0,
+        "hp_max": 0,
+        "ac": 0,
+        "initiative": 0,
+        "speed": 30,
+        "proficiency_bonus": 2,
+        "passive_perception": 0,
+        "hit_dice": "1d8",
+        "saving_throws": {{ "str": 0, "dex": 0, "con": 0, "int": 0, "wis": 0, "cha": 0 }}
+      }},
       "features": [],
       "inventory": [],
       "background_story": "..."
