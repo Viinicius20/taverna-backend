@@ -262,6 +262,10 @@ async def upload_pdf(file: UploadFile = File(...), system: str = "D&D 5e", user_
       "skills": {{ "acrobatics": 7, "stealth": 9 }},
       "inventory": ["item1", "item2"],
       "features": ["feature1", "feature2"],
+       "spellcasting": {{
+        "ability": "int",
+        "dc": 0,
+        "spells": []
       "background_story": "..."
     }}
 
