@@ -96,13 +96,20 @@ async def create_character(req: CreateCharacterRequest):
     - hit_dice
     - saving_throws (para os 6 atributos)
     
-     **CRÍTICO**: Retorne APENAS um JSON válido e COMPLETO. Nenhum JSON incompleto ou truncado. Feche TODOS os arrays e objetos corretamente com }} e ].
+    **CRÍTICO**: Retorne APENAS um JSON válido e COMPLETO. Nenhum JSON incompleto ou truncado. Feche TODOS os arrays e objetos corretamente com }} e ].
+
+    **IMPORTANTE - CLASSES**: Se a descrição mencionar múltiplas classes (ex: "Guerreiro que virou Bruxo"), 
+    retorne "classes" como um ARRAY com nome + level individual. 
+    HP deve ser a SOMA dos hit dice de ambas as classes + bônus CON.
 
     Retorne APENAS um JSON válido com esta estrutura exata:
     {{
       "name": "Nome",
       "race": "...",
-      "class": "...",
+      "classes": [
+            {{"name": "Guerreiro", "level": 5}},
+            {{"name": "Bruxo", "level": 1}}
+        ],
       "level": 1,
       "alignment": "...",
       "background": "...",
@@ -131,7 +138,26 @@ async def create_character(req: CreateCharacterRequest):
     }}
     """
     try:
+        print(f"DEBUG 1: Enviando prompt para IA...")
         ficha = gerar_json_com_gemini(prompt)
+        print(f"DEBUG 2: IA respondeu: {ficha}")
+
+
+        # Validar e converter classes
+        if isinstance(ficha.get("class"), str):
+            classes_str = ficha.get("class", "")
+            if " / " in classes_str or " e " in classes_str.lower():
+                class_names = [c.strip() for c in classes_str.replace(" e ", " / ").split(" / ")]
+                ficha["classes"] = [{"name": name, "level": 1} for name in class_names]
+            else:
+                ficha["classes"] = [{"name": classes_str, "level": 1}]
+            ficha.pop("class", None)
+        else:
+            ficha["classes"] = ficha.get("classes", [{"name": "Guerreiro", "level": 1}])
+
+        # Calcular total_level
+        total_level = sum(c.get("level", 1) for c in ficha.get("classes", []))
+        ficha["total_level"] = total_level
 
         insert_data = {
             "name": ficha.get("name", "Sem nome"),
@@ -151,6 +177,9 @@ async def create_character(req: CreateCharacterRequest):
             "saved_id": response.data[0]["id"] if response.data else None
         }
     except Exception as e:
+        print(f"ERRO NA IA: {str(e)}")
+        print(f"Tipo: {type(e)}")
+        raise HTTPException(500, f"Erro na IA: {str(e)}")
         raise HTTPException(500, f"Erro na IA: {str(e)}")
 
 
