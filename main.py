@@ -95,6 +95,8 @@ async def create_character(req: CreateCharacterRequest):
     - passive_perception
     - hit_dice
     - saving_throws (para os 6 atributos)
+    
+     **CRÍTICO**: Retorne APENAS um JSON válido e COMPLETO. Nenhum JSON incompleto ou truncado. Feche TODOS os arrays e objetos corretamente com }} e ].
 
     Retorne APENAS um JSON válido com esta estrutura exata:
     {{
@@ -115,6 +117,12 @@ async def create_character(req: CreateCharacterRequest):
         "passive_perception": 0,
         "hit_dice": "1d8",
         "saving_throws": {{ "str": 0, "dex": 0, "con": 0, "int": 0, "wis": 0, "cha": 0 }}
+      }},
+      "spellcasting": {{
+        "ability": "int",
+        "dc": 15,
+        "spells": []
+        **Spellcasting deve ter spells sempre como array vazio []. Não preencha com nada.**
       }},
       "skills": {{ "acrobatics": 5, "stealth": 3, ... }},
       "inventory": ["item1", "item2"],
