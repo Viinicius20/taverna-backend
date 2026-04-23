@@ -503,6 +503,61 @@ async def get_skill_description(skill_name: str, system: str = "D&D 5e", charact
     except Exception as e:
         raise HTTPException(500, f"Erro na IA: {str(e)}")
 
+    # ======================= SPELLS =======================
+
+SPELLS_BY_CLASS = {
+    "Wizard": [
+        {"name": "Fire Bolt", "level": 0},
+        {"name": "Ray of Frost", "level": 0},
+        {"name": "Minor Illusion", "level": 0},
+        {"name": "Prestidigitation", "level": 0},
+        {"name": "Mending", "level": 0},
+        {"name": "Shocking Grasp", "level": 0},
+        {"name": "Magic Missile", "level": 1},
+        {"name": "Shield", "level": 1},
+        {"name": "Mage Armor", "level": 1},
+        {"name": "Fireball", "level": 3},
+        {"name": "Ice Storm", "level": 4},
+        {"name": "Cone of Cold", "level": 5},
+    ],
+    "Mago": [
+        {"name": "Disparo de Fogo", "level": 0},
+        {"name": "Bola de Fogo", "level": 3},
+        {"name": "Míssil Mágico", "level": 1},
+        {"name": "Armadura Mágica", "level": 1},
+    ],
+    "Cleric": [
+        {"name": "Light", "level": 0},
+        {"name": "Sacred Flame", "level": 0},
+        {"name": "Guidance", "level": 0},
+        {"name": "Cure Wounds", "level": 1},
+        {"name": "Healing Word", "level": 1},
+        {"name": "Spiritual Weapon", "level": 2},
+        {"name": "Revivify", "level": 3},
+    ],
+    "Sacerdote": [
+        {"name": "Curar Ferimentos", "level": 1},
+        {"name": "Palavra de Cura", "level": 1},
+        {"name": "Arma Espiritual", "level": 2},
+    ],
+    "Warlock": [
+        {"name": "Eldritch Blast", "level": 0},
+        {"name": "Agonizing Blast", "level": 0},
+        {"name": "Hex", "level": 1},
+        {"name": "Armor of Agathys", "level": 1},
+        {"name": "Darkness", "level": 2},
+    ],
+    "Bruxo": [
+        {"name": "Explosão Sobrenatural", "level": 0},
+        {"name": "Maldição", "level": 1},
+    ]
+}
+
+@app.get("/spells")
+async def get_spells(class_name: str = "Wizard"):
+        spells = SPELLS_BY_CLASS.get(class_name, [])
+        return {"success": True, "data": spells}
+
 
 @app.get("/")
 async def root():
