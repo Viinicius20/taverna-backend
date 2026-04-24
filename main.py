@@ -214,10 +214,7 @@ async def create_character(req: CreateCharacterRequest):
 
     except Exception as e:
         print(f"ERRO GERAL: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail="Erro interno no servidor"
-        )
+        raise HTTPException(500, "Erro ao processar PDF")
 
 
 @app.put("/characters/{character_id}")
@@ -317,7 +314,9 @@ async def level_up(req: LevelUpRequest):
         }).eq("id", req.character_id).execute()
         return {"success": True, "data": ficha_nova}
     except Exception as e:
-        raise HTTPException(500, f"Erro ao subir de nível: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(500, "Erro ao processar level up")
 
 def extrair_texto_pdf(contents):
     """Extrai texto de um PDF"""
