@@ -1,8 +1,10 @@
 import os
 import json
 import fitz  # PyMuPDF
+from google.genai.errors import ServerError
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
+from typing import Optional
 from pydantic import BaseModel
 from supabase import create_client, Client
 from dotenv import load_dotenv
@@ -16,7 +18,7 @@ app = FastAPI(title="RPG IA - Backend")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://localhost:3000", "https://taverna-frontend.vercel.app"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -46,33 +48,55 @@ class UpdateCharacterRequest(BaseModel):
 class LevelUpRequest(BaseModel):
     character_id: str
     ficha_atual: dict
-    system: str = "D&D 5e"
     nivel_alvo: int
+    system: str = "D&D 5e"
+    class_name: Optional[str] = None
 
 
 # ===================== FUNÇÃO AUXILIAR GEMINI =====================
-def gerar_json_com_gemini(prompt: str) -> dict:
-    response = client.models.generate_content(
-        model="gemini-2.5-flash",
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            temperature=0.7,
-            response_mime_type="application/json"
-        )
-    )
-    text = response.text.strip()
-    if text.startswith("```json"):
-        text = text[7:-3].strip()
-    return json.loads(text)
+from google.genai.errors import ServerError
+import time
 
+def gerar_json_com_gemini(prompt: str, max_retries=3) -> dict:
+    last_error = None
 
-def extrair_texto_pdf(contents: bytes) -> str:
-    doc = fitz.open(stream=contents, filetype="pdf")
-    text = ""
-    for page_num, page in enumerate(doc):
-        text += f"\n--- PÁGINA {page_num + 1} ---\n"
-        text += page.get_text("text")
-    return text
+    for tentativa in range(max_retries):
+        try:
+            response = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    temperature=0.7,
+                    response_mime_type="application/json"
+                )
+            )
+
+            text = response.text.strip()
+
+            if text.startswith("```json"):
+                text = text[7:-3].strip()
+
+            return json.loads(text)
+
+        except ServerError as e:
+            last_error = e
+            print(f"[IA] 503 tentativa {tentativa+1}/{max_retries}")
+            time.sleep(2 * (tentativa + 1))  # backoff progressivo
+
+        except json.JSONDecodeError as e:
+            print("[IA] JSON inválido, tentando corrigir...")
+            try:
+                # tentativa simples de correção
+                text = text.split("```")[-1]
+                return json.loads(text)
+            except:
+                last_error = e
+
+        except Exception as e:
+            last_error = e
+            break
+
+    raise last_error
 
 
 # ===================== ENDPOINTS =====================
@@ -176,11 +200,24 @@ async def create_character(req: CreateCharacterRequest):
             "data": ficha,
             "saved_id": response.data[0]["id"] if response.data else None
         }
+    except ServerError:
+        raise HTTPException(
+            status_code=503,
+            detail="IA sobrecarregada, tente novamente em alguns segundos"
+        )
+
+    except json.JSONDecodeError:
+        raise HTTPException(
+            status_code=502,
+            detail="Erro ao interpretar resposta da IA"
+        )
+
     except Exception as e:
-        print(f"ERRO NA IA: {str(e)}")
-        print(f"Tipo: {type(e)}")
-        raise HTTPException(500, f"Erro na IA: {str(e)}")
-        raise HTTPException(500, f"Erro na IA: {str(e)}")
+        print(f"ERRO GERAL: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="Erro interno no servidor"
+        )
 
 
 @app.put("/characters/{character_id}")
@@ -207,13 +244,37 @@ async def level_up(req: LevelUpRequest):
     if req.nivel_alvo > 20:
         raise HTTPException(400, "Nível máximo é 20")
 
+        class_name_alvo = getattr(req, 'class_name', None)
+
+        if isinstance(ficha.get("classes"), list) and len(ficha["classes"]) > 1:
+            if not class_name_alvo:
+                raise HTTPException(400, {
+                    "error": "Escolha qual classe fazer level up",
+                    "classes": [{"name": c["name"], "level": c["level"]} for c in ficha["classes"]]
+                })
+
+            classe_encontrada = next(
+                (c for c in ficha["classes"] if c["name"].lower() == class_name_alvo.lower()),
+                None
+            )
+            if not classe_encontrada:
+                raise HTTPException(400, f"Classe '{class_name_alvo}' não encontrada")
+
+            classe_encontrada["level"] += 1
+            ficha["total_level"] = sum(c.get("level", 1) for c in ficha["classes"])
+        else:
+            # Se tem só 1 classe, incrementa ela automaticamente
+            if isinstance(ficha.get("classes"), list) and len(ficha["classes"]) == 1:
+                ficha["classes"][0]["level"] += 1
+                ficha["total_level"] = ficha["classes"][0]["level"]
+
     prompt = f"""
     Você é um mestre experiente de RPG. Um personagem subiu de nível.
 
     Sistema: {req.system}
     Nome: {ficha.get("name")}
     Raça: {ficha.get("race")}
-    Classe: {ficha.get("class")}
+    Classes: {json.dumps(ficha.get("classes", [{"name": ficha.get("class")}]))}
     Nível atual: {nivel_atual}
     Nível alvo: {req.nivel_alvo}
     Features atuais: {json.dumps(ficha.get("features", []))}
@@ -257,6 +318,23 @@ async def level_up(req: LevelUpRequest):
         return {"success": True, "data": ficha_nova}
     except Exception as e:
         raise HTTPException(500, f"Erro ao subir de nível: {str(e)}")
+
+def extrair_texto_pdf(contents):
+    """Extrai texto de um PDF"""
+    try:
+        import PyPDF2
+        from io import BytesIO
+
+        pdf_file = BytesIO(contents)
+        pdf_reader = PyPDF2.PdfReader(pdf_file)
+
+        text = ""
+        for page in pdf_reader.pages:
+                text += page.extract_text()
+
+        return text
+    except Exception as e:
+        return f"Erro ao extrair PDF: {str(e)}"
 
 
 @app.post("/upload-pdf")
@@ -343,7 +421,12 @@ async def upload_pdf_npc(file: UploadFile = File(...), system: str = "D&D 5e", c
     if not contents:
         raise HTTPException(400, "PDF está vazio ou corrompido")
 
+    print("DEBUG: Chamando extrair_texto_pdf...")
+
     text = extrair_texto_pdf(contents)
+
+    print(f"DEBUG: Texto extraído: {text[:100]}...")
+
     if not text.strip():
         raise HTTPException(400, "Não foi possível extrair texto do PDF")
 
@@ -379,7 +462,6 @@ async def upload_pdf_npc(file: UploadFile = File(...), system: str = "D&D 5e", c
     Texto da ficha:
     {text[:25000]}
     """
-
     try:
         dados = gerar_json_com_gemini(prompt)
         response = supabase.table("npcs").insert({
@@ -396,7 +478,6 @@ async def upload_pdf_npc(file: UploadFile = File(...), system: str = "D&D 5e", c
         }
     except Exception as e:
         raise HTTPException(500, f"Erro ao processar PDF: {str(e)}")
-
 
 @app.get("/characters")
 async def list_characters(user_id: str = "", campaign_id: str = ""):
