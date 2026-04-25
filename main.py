@@ -447,49 +447,62 @@ async def upload_pdf_npc(file: UploadFile = File(...), system: str = "D&D 5e", c
     if not contents:
         raise HTTPException(400, "PDF está vazio ou corrompido")
 
-    print("DEBUG: Chamando extrair_texto_pdf...")
-
-    text = extrair_texto_pdf(contents)
-
-    print(f"DEBUG: Texto extraído: {text[:100]}...")
-
-    if not text.strip():
-        raise HTTPException(400, "Não foi possível extrair texto do PDF")
-
-    prompt = f"""
-       Extraia TODOS os dados da ficha de RPG do texto abaixo e organize como NPC.
-       Sistema do jogo: {system}
-
-       Retorne APENAS um JSON com esta estrutura:
-       {{
-         "name": "...",
-         "race": "...",
-         "class": "...",
-         "level": 1,
-         "alignment": "...",
-         "background": "...",
-         "occupation": "...",
-         "personality": "...",
-         "motivation": "...",
-         "appearance": "...",
-         "attributes": {{ "str": 10, "dex": 18, "con": 14, "int": 8, "wis": 16, "cha": 8 }},
-         "combat": {{
-           "hp": 0,
-           "hp_max": 0,
-           "ac": 0,
-           "initiative": 0,
-           "speed": 30,
-           "proficiency_bonus": 2,
-           "passive_perception": 0,
-           "hit_dice": "1d8",
-           "saving_throws": {{ "str": 0, "dex": 0, "con": 0, "int": 0, "wis": 0, "cha": 0 }}
-         }},
-
-    Texto da ficha:
-    {text[:25000]}
-    """
+    # Converte PDF para imagens
     try:
-        dados = gerar_json_com_gemini(prompt)
+        import fitz
+        import base64
+        pdf_doc = fitz.open(stream=contents, filetype="pdf")
+        parts = [{"text": f"""Extraia TODOS os dados da ficha de RPG das imagens e organize como NPC.
+Sistema: {system}
+
+Retorne APENAS um JSON com esta estrutura exata:
+{{
+  "name": "...",
+  "race": "...",
+  "class": "...",
+  "level": 1,
+  "alignment": "...",
+  "background": "...",
+  "occupation": "...",
+  "personality": "...",
+  "motivation": "...",
+  "appearance": "...",
+  "attributes": {{"str": 10, "dex": 18, "con": 14, "int": 8, "wis": 16, "cha": 8}},
+  "combat": {{
+    "hp": 0, "hp_max": 0, "ac": 0, "initiative": 0, "speed": 30,
+    "proficiency_bonus": 2, "passive_perception": 0, "hit_dice": "1d8",
+    "saving_throws": {{"str": 0, "dex": 0, "con": 0, "int": 0, "wis": 0, "cha": 0}}
+  }},
+  "features": [],
+  "inventory": [],
+  "secret_notes": ""
+}}
+Retorne APENAS o JSON, sem explicações.
+"""}]
+        for page in pdf_doc:
+            pix = page.get_pixmap(dpi=150)
+            img_bytes = pix.tobytes("png")
+            parts.append({
+                "inline_data": {
+                    "mime_type": "image/png",
+                    "data": base64.b64encode(img_bytes).decode()
+                }
+            })
+        pdf_doc.close()
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(500, f"Erro ao converter PDF: {str(e)}")
+
+    try:
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=[{"role": "user", "parts": parts}]
+        )
+        raw = response.text.strip()
+        raw = raw.replace("```json", "").replace("```", "").strip()
+        dados = json.loads(raw)
+
         response = supabase.table("npcs").insert({
             "campaign_id": campaign_id,
             "name": dados.get("name", "NPC importado"),
@@ -503,7 +516,9 @@ async def upload_pdf_npc(file: UploadFile = File(...), system: str = "D&D 5e", c
             "message": "NPC importado com sucesso!"
         }
     except Exception as e:
-        raise HTTPException(500, f"Erro ao processar PDF: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(500, f"Erro ao processar NPC: {str(e)}")
 
 @app.get("/characters")
 async def list_characters(user_id: str = "", campaign_id: str = ""):
@@ -538,9 +553,11 @@ async def delete_character(character_id: str):
     except Exception as e:
         raise HTTPException(500, f"Erro ao deletar personagem: {str(e)}")
 
+print("DEBUG: Endpoint /npcs foi chamado!")
 
 @app.post("/npcs")
 async def create_npc(campaign_id: str, description: str, system: str = "D&D 5e"):
+    print(f"DEBUG: START create_npc")
     prompt = f"""
     Você é um mestre experiente de RPG. Crie um NPC interessante e detalhado.
 
@@ -596,6 +613,7 @@ async def create_npc(campaign_id: str, description: str, system: str = "D&D 5e")
             "saved_id": response.data[0]["id"] if response.data else None
         }
     except Exception as e:
+        print(f"ERROR AQUI: {str(e)}")
         raise HTTPException(500, f"Erro ao criar NPC: {str(e)}")
 
 
