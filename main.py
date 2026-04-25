@@ -163,7 +163,13 @@ async def create_character(req: CreateCharacterRequest):
     """
     try:
         print(f"DEBUG 1: Enviando prompt para IA...")
-        ficha = gerar_json_com_gemini(prompt)
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=[{"role": "user", "parts": [{"text": prompt}]}]
+        )
+        raw = response.text.strip()
+        raw = raw.replace("```json", "").replace("```", "").strip()
+        ficha = json.loads(raw)
         print(f"DEBUG 2: IA respondeu: {ficha}")
 
 
@@ -345,50 +351,68 @@ async def upload_pdf(file: UploadFile = File(...), system: str = "D&D 5e", user_
     if not contents:
         raise HTTPException(400, "PDF está vazio ou corrompido")
 
-    text = extrair_texto_pdf(contents)
-    if not text.strip():
-        raise HTTPException(400, "Não foi possível extrair texto do PDF")
-
-    prompt = f"""
-    Extraia TODOS os dados da ficha de RPG do texto abaixo.
-    Sistema do jogo: {system}
-
-    Retorne APENAS um JSON com esta estrutura:
-    {{
-      "name": "...",
-      "race": "...",
-      "class": "...",
-      "level": 1,
-      "alignment": "...",
-      "background": "...",
-      "attributes": {{ "str": 10, "dex": 18, "con": 14, "int": 8, "wis": 16, "cha": 8 }},
-      "combat": {{
-        "hp": 0,
-        "hp_max": 0,
-        "ac": 0,
-        "initiative": 0,
-        "speed": 30,
-        "proficiency_bonus": 2,
-        "passive_perception": 0,
-        "saving_throws": {{ "str": 0, "dex": 0, "con": 0, "int": 0, "wis": 0, "cha": 0 }},
-        "hit_dice": "1d8"
-      }},
-      "skills": {{ "acrobatics": 7, "stealth": 9 }},
-      "inventory": ["item1", "item2"],
-      "features": ["feature1", "feature2"],
-       "spellcasting": {{
-        "ability": "int",
-        "dc": 0,
-        "spells": []
-      "background_story": "..."
-    }}
-
-    Texto da ficha:
-    {text[:25000]}
-    """
-
+    # Converte PDF para imagens
     try:
-        ficha = gerar_json_com_gemini(prompt)
+        import fitz
+        import base64
+        pdf_doc = fitz.open(stream=contents, filetype="pdf")
+        parts = [{"text": f"""Extraia TODOS os dados da ficha de RPG das imagens abaixo.
+Sistema: {system}
+
+Retorne APENAS um JSON com esta estrutura exata:
+
+IMPORTANTE: inventory deve ser array de STRINGS simples, nunca objetos.
+{{
+  "name": "...",
+  "race": "...",
+  "class": "...",
+  "level": 5,
+  "alignment": "...",
+  "background": "...",
+  "classes": [{{"name": "Monk", "level": 4}}, {{"name": "Rogue", "level": 1}}],
+  "attributes": {{"str": 10, "dex": 18, "con": 14, "int": 8, "wis": 16, "cha": 8}},
+  "combat": {{
+    "hp": 38, "hp_max": 38, "ac": 17, "initiative": 4, "speed": 40,
+    "proficiency_bonus": 3, "passive_perception": 16,
+    "saving_throws": {{"str": 3, "dex": 7, "con": 2, "int": -1, "wis": 3, "cha": -1}},
+    "hit_dice": "4d8+1d8"
+  }},
+  "skills": {{"acrobatics": 7, "stealth": 10}},
+  "inventory": ["item 1 (qtd, peso)", "item 2 (qtd, peso)"],
+  "features": [],
+  "spellcasting": {{"ability": "", "dc": 0, "spells": []}},
+  "background_story": ""
+}}
+
+Se tiver múltiplas classes, preencha o array "classes" com cada uma e seu nível.
+Retorne APENAS o JSON, sem explicações.
+"""}]
+        for page in pdf_doc:
+            pix = page.get_pixmap(dpi=150)
+            img_bytes = pix.tobytes("png")
+            parts.append({
+                "inline_data": {
+                    "mime_type": "image/png",
+                    "data": base64.b64encode(img_bytes).decode()
+                }
+            })
+        pdf_doc.close()
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(500, f"Erro ao converter PDF: {str(e)}")
+
+    # Chama Gemini com visão
+    try:
+        import json
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=[{"role": "user", "parts": parts}]
+        )
+        raw = response.text.strip()
+        raw = raw.replace("```json", "").replace("```", "").strip()
+        ficha = json.loads(raw)
+
         insert_data = {
             "name": ficha.get("name", "Personagem importado"),
             "system": system,
@@ -408,6 +432,8 @@ async def upload_pdf(file: UploadFile = File(...), system: str = "D&D 5e", user_
             "message": "Ficha extraída e salva com sucesso!"
         }
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(500, f"Erro ao processar PDF: {str(e)}")
 
 
