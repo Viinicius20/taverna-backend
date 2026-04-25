@@ -1,0 +1,22 @@
+[33me646050[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m)[m fix: remove .env do git tracking
+[33m1f10780[m fix: remove .env do git tracking
+[33mefebfbf[m fix: remove .env do git tracking
+[33m67b8e79[m fix: trocar modelo Gemini, adicionar logs de debug level-up
+[33m24f27bf[m remove .env from git tracking
+[33m625fc3b[m feat: support multiclass level-up with optional class_name parameter
+[33m9b24d74[m protege .env no gitignore
+[33m9443bba[m removendo .env do repositorio
+[33m77603b6[m feat: support multiclass characters with classes array, validation and total_level calculation
+[33m420d8b4[m add spell dropdown modal
+[33mb288e4b[m remove .env from tracking
+[33maca1233[m fix: simplify spellcasting to prevent truncation
+[33m81ecba8[m add spellcasting field to characters and NPCs
+[33m50bf05b[m add combat stats to NPCs
+[33m5547799[m removendo segredos do rastreamento
+[33m0d3fe0c[m add combat stats nos prompts
+[33m56e66c4[m add combat stats nos prompts
+[33mc542c2e[m add upload-pdf-npc endpoint
+[33m92aeb80[m add level up endpoint
+[33m5c17cc9[m trigger redeploy
+[33m69f0a92[m add python-multipart
+[33m9a13c41[m inicio limpo
