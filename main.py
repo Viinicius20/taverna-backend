@@ -52,6 +52,10 @@ class LevelUpRequest(BaseModel):
     system: str = "D&D 5e"
     class_name: Optional[str] = None
 
+class HombrewSpellRequest(BaseModel):
+    name: str
+    class_name: str
+
 
 # ===================== FUNÇÃO AUXILIAR GEMINI =====================
 from google.genai.errors import ServerError
@@ -134,6 +138,7 @@ async def create_character(req: CreateCharacterRequest):
             {{"name": "Guerreiro", "level": 5}},
             {{"name": "Bruxo", "level": 1}}
         ],
+      "subclass": "Mestre de Batalha",
       "level": 1,
       "alignment": "...",
       "background": "...",
@@ -657,65 +662,75 @@ async def get_skill_description(skill_name: str, system: str = "D&D 5e", charact
     except Exception as e:
         raise HTTPException(500, f"Erro na IA: {str(e)}")
 
-    # ======================= SPELLS =======================
-
-SPELLS_BY_CLASS = {
-    "Wizard": [
-        {"name": "Fire Bolt", "level": 0},
-        {"name": "Ray of Frost", "level": 0},
-        {"name": "Minor Illusion", "level": 0},
-        {"name": "Prestidigitation", "level": 0},
-        {"name": "Mending", "level": 0},
-        {"name": "Shocking Grasp", "level": 0},
-        {"name": "Magic Missile", "level": 1},
-        {"name": "Shield", "level": 1},
-        {"name": "Mage Armor", "level": 1},
-        {"name": "Fireball", "level": 3},
-        {"name": "Ice Storm", "level": 4},
-        {"name": "Cone of Cold", "level": 5},
-    ],
-    "Mago": [
-        {"name": "Disparo de Fogo", "level": 0},
-        {"name": "Bola de Fogo", "level": 3},
-        {"name": "Míssil Mágico", "level": 1},
-        {"name": "Armadura Mágica", "level": 1},
-    ],
-    "Cleric": [
-        {"name": "Light", "level": 0},
-        {"name": "Sacred Flame", "level": 0},
-        {"name": "Guidance", "level": 0},
-        {"name": "Cure Wounds", "level": 1},
-        {"name": "Healing Word", "level": 1},
-        {"name": "Spiritual Weapon", "level": 2},
-        {"name": "Revivify", "level": 3},
-    ],
-    "Sacerdote": [
-        {"name": "Curar Ferimentos", "level": 1},
-        {"name": "Palavra de Cura", "level": 1},
-        {"name": "Arma Espiritual", "level": 2},
-    ],
-    "Warlock": [
-        {"name": "Eldritch Blast", "level": 0},
-        {"name": "Agonizing Blast", "level": 0},
-        {"name": "Hex", "level": 1},
-        {"name": "Armor of Agathys", "level": 1},
-        {"name": "Darkness", "level": 2},
-    ],
-    "Bruxo": [
-        {"name": "Explosão Sobrenatural", "level": 0},
-        {"name": "Maldição", "level": 1},
-    ]
-}
-
 @app.get("/spells")
 async def get_spells(class_name: str = "Wizard"):
-        spells = SPELLS_BY_CLASS.get(class_name, [])
-        return {"success": True, "data": spells}
+    result = supabase.table('spells').select('*').eq('class_name', class_name).execute()
+    return {"success": True, "data": result.data}
 
 
 @app.get("/")
 async def root():
     return {"status": "RPG IA Backend rodando!", "version": "1.0"}
+
+
+@app.post('/spells/homebrew')
+async def create_homebrew_spell(req: HombrewSpellRequest):
+    """
+    IA cria uma magia nova baseado em nome e classe
+    """
+
+    prompt = f"""
+    Você é um criador de conteúdo D&D 5e expert.
+
+    Crie uma magia original chamada "{req.name}" para a classe {req.class_name}.
+
+    Siga EXATAMENTE este formato JSON (sem markdown, sem explicações):
+    {{
+      "name": "{req.name}",
+      "level": 2,
+      "school": "Evocation",
+      "class_name": "{req.class_name}",
+      "description": "Descrição curta da magia",
+      "mechanics": "Como funciona em jogo (efeitos, salvaguardas, etc)",
+      "range": "60 feet",
+      "duration": "Concentration, up to 1 minute",
+      "components": "V, S, M"
+    }}
+    """
+
+    try:
+        response = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=prompt
+        )
+        spell_json = response.text
+        spell_json = response.text
+        spell_data = json.loads(spell_json)
+
+        result = supabase.table('spells').insert({
+            'name': spell_data.get('name'),
+            'level': spell_data.get('level'),
+            'school': spell_data.get('school'),
+            'class_name': spell_data.get('class_name'),
+            'description': spell_data.get('description'),
+            'mechanics': spell_data.get('mechanics'),
+            'range': spell_data.get('range'),
+            'duration': spell_data.get('duration'),
+            'components': spell_data.get('components'),
+            'is_homebrew': True
+        }).execute()
+
+        return {
+            'success': True,
+            'data': spell_data,
+            'message': f"Magia '{spell_data.get('name')}' criada com sucesso!"
+        }
+
+    except json.JSONDecodeError:
+        raise HTTPException(400, {"error": "IA não retornou JSON válido"})
+    except Exception as e:
+        print(f"ERRO HOMEBREW: {e}")
+        raise HTTPException(500, {"error": f"Erro ao criar magia: {str(e)}"})
 
 
 # ===================== RODAR =====================
