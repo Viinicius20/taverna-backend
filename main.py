@@ -368,6 +368,9 @@ Sistema: {system}
 Retorne APENAS um JSON com esta estrutura exata:
 
 IMPORTANTE: inventory deve ser array de STRINGS simples, nunca objetos.
+IMPORTANTE: inventory deve ser array de STRINGS simples, nunca objetos.
+IMPORTANTE: "alignment" deve ser APENAS o alinhamento moral (ex: Leal Bom, Caótico Neutro, Neutro). NÃO coloque arquétipo ou subclasse aqui.
+IMPORTANTE: "background" deve ser o antecedente do personagem (ex: Haunted One, Sage, Criminal).
 {{
   "name": "...",
   "race": "...",
