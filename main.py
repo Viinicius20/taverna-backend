@@ -10,11 +10,22 @@ from supabase import create_client, Client
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+from fastapi.responses import JSONResponse
 
 load_dotenv()
 
 # ===================== CONFIG =====================
 app = FastAPI(title="RPG IA - Backend")
+
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_handler(request, exc):
+    return JSONResponse(status_code=429, content={"detail": "Muitas requisições. Tente novamente em alguns segundos."})
 
 app.add_middleware(
     CORSMiddleware,
@@ -106,7 +117,8 @@ def gerar_json_com_gemini(prompt: str, max_retries=3) -> dict:
 # ===================== ENDPOINTS =====================
 
 @app.post("/create-character")
-async def create_character(req: CreateCharacterRequest):
+@limiter.limit("10/minute")
+async def create_character(request: Request, req: CreateCharacterRequest):
     prompt = f"""
     Você é um mestre experiente de RPG. Crie uma ficha completa e equilibrada.
 
@@ -286,7 +298,8 @@ Itens mágicos: apropriados pro nível {req.nivel_medio}, criativos e únicos.""
 
 
 @app.post("/level-up")
-async def level_up(req: LevelUpRequest):
+@limiter.limit("10/minute")
+async def level_up(request: Request, req: LevelUpRequest):
     ficha = req.ficha_atual
     nivel_atual = ficha.get("level", 1)
 
@@ -391,7 +404,8 @@ def extrair_texto_pdf(contents):
 
 
 @app.post("/upload-pdf")
-async def upload_pdf(file: UploadFile = File(...), system: str = "D&D 5e", user_id: str = "", campaign_id: str = ""):
+@limiter.limit("5/minute")
+async def upload_pdf(request: Request, file: UploadFile = File(...), ...):
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(400, "Arquivo deve ser PDF")
 
