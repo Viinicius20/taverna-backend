@@ -242,6 +242,48 @@ async def update_character(character_id: str, req: UpdateCharacterRequest):
     except Exception as e:
         raise HTTPException(500, f"Erro ao atualizar personagem: {str(e)}")
 
+class LootRequest(BaseModel):
+    nivel_medio: int = 5
+    quantidade_mundanos: int = 4
+    quantidade_magicos: int = 1
+    contexto: str = ""
+
+@app.post("/loot/generate")
+async def generate_loot(req: LootRequest):
+    prompt = f"""Você é um mestre de D&D 5e experiente.
+Gere uma lista de itens de loot para um grupo de nível {req.nivel_medio}.
+Contexto: {req.contexto or 'inimigos genéricos derrotados'}
+
+Retorne APENAS um JSON válido neste formato exato:
+{{
+  "mundanos": ["item1", "item2", "item3", "item4"],
+  "magicos": [
+    {{
+      "nome": "Nome do Item",
+      "raridade": "Comum/Incomum/Raro/Muito Raro/Lendário",
+      "descricao": "Descrição curta do item e seus efeitos mágicos"
+    }}
+  ]
+}}
+
+{req.quantidade_mundanos} itens mundanos e {req.quantidade_magicos} item(ns) mágico(s).
+Itens mundanos: moedas, poções simples, comida, equipamentos comuns.
+Itens mágicos: apropriados pro nível {req.nivel_medio}, criativos e únicos."""
+
+    try:
+        response = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=prompt
+        )
+        raw = response.text.strip().replace("```json", "").replace("```", "").strip()
+        loot = json.loads(raw)
+        return {"success": True, "data": loot}
+    except json.JSONDecodeError:
+        raise HTTPException(400, {"error": "IA não retornou JSON válido"})
+    except Exception as e:
+        print(f"ERRO LOOT: {e}")
+        raise HTTPException(500, {"error": f"Erro ao gerar loot: {str(e)}"})
+
 
 @app.post("/level-up")
 async def level_up(req: LevelUpRequest):
@@ -675,6 +717,53 @@ async def get_spells(class_name: str = "Wizard"):
 async def root():
     return {"status": "RPG IA Backend rodando!", "version": "1.0"}
 
+@app.get("/magic-items")
+async def get_magic_items():
+    try:
+        response = supabase.table("magic_items").select("*").order("name").execute()
+        return {"success": True, "data": response.data}
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao buscar itens mágicos: {str(e)}")
+
+class MagicItemRequest(BaseModel):
+    name: str
+    class_name: str = ""
+    rarity: str = ""
+
+
+@app.post("/magic-items/homebrew")
+async def create_homebrew_item(req: MagicItemRequest):
+    rarity_instruction = f'A raridade DEVE ser exatamente "{req.rarity}".' if req.rarity else 'Escolha a raridade adequada ao lore do item.'
+
+    prompt = f"""Você é um criador de conteúdo D&D 5e expert.
+Crie um item mágico original chamado EXATAMENTE "{req.name}" (não altere o nome).
+{rarity_instruction}
+
+Retorne APENAS um JSON válido neste formato:
+{{
+  "name": "{req.name}",
+  "rarity": "Comum/Incomum/Raro/Muito Raro/Lendário",
+  "type": "Arma/Armadura/Poção/Anel/Varinha/Maravilha/Outro",
+  "description": "Descrição física e lore do item. Não use markdown.",
+  "mechanics": "Como funciona em jogo. Não use markdown.",
+  "requires_attunement": false
+}}"""
+    try:
+        response = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=prompt
+        )
+        raw = response.text.strip().replace("```json", "").replace("```", "").strip()
+        item_data = json.loads(raw)
+        item_data["is_homebrew"] = True
+        result = supabase.table("magic_items").insert(item_data).execute()
+        return {"success": True, "data": item_data}
+    except json.JSONDecodeError:
+        raise HTTPException(400, {"error": "IA não retornou JSON válido"})
+    except Exception as e:
+        print(f"ERRO MAGIC ITEM: {e}")
+        raise HTTPException(500, {"error": f"Erro ao criar item: {str(e)}"})
+
 
 @app.post('/spells/homebrew')
 async def create_homebrew_spell(req: HombrewSpellRequest):
@@ -734,6 +823,40 @@ async def create_homebrew_spell(req: HombrewSpellRequest):
     except Exception as e:
         print(f"ERRO HOMEBREW: {e}")
         raise HTTPException(500, {"error": f"Erro ao criar magia: {str(e)}"})
+
+class RulesRequest(BaseModel):
+    query: str
+    system: str = "D&D 5e"
+
+@app.post("/rules/search")
+async def search_rules(req: RulesRequest):
+    prompt = f"""Você é um especialista em {req.system}.
+O mestre perguntou: "{req.query}"
+
+Responda de forma DIRETA e CONCISA como se fosse uma consulta rápida no livro de regras.
+Sem introduções. Vá direto ao ponto.
+
+Retorne APENAS um JSON válido neste formato:
+{{
+  "titulo": "Nome da regra/condição",
+  "resumo": "Explicação curta em 1-2 frases",
+  "detalhes": "Regra completa com todos os efeitos mecânicos",
+  "fonte": "Nome do livro/seção onde encontrar (ex: Livro do Jogador p.290)"
+}}"""
+
+    try:
+        response = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=prompt
+        )
+        raw = response.text.strip().replace("```json", "").replace("```", "").strip()
+        regra = json.loads(raw)
+        return {"success": True, "data": regra}
+    except json.JSONDecodeError:
+        raise HTTPException(400, {"error": "IA não retornou JSON válido"})
+    except Exception as e:
+        print(f"ERRO RULES: {e}")
+        raise HTTPException(500, {"error": f"Erro ao buscar regra: {str(e)}"})
 
 
 # ===================== RODAR =====================
