@@ -405,7 +405,7 @@ def extrair_texto_pdf(contents):
 
 @app.post("/upload-pdf")
 @limiter.limit("5/minute")
-async def upload_pdf(request: Request, file: UploadFile = File(...), ...):
+async def upload_pdf(request: Request, file: UploadFile = File(...), system: str = "D&D 5e", user_id: str = "", campaign_id: str = ""):
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(400, "Arquivo deve ser PDF")
 
