@@ -745,6 +745,37 @@ class MagicItemRequest(BaseModel):
     class_name: str = ""
     rarity: str = ""
 
+@app.get("/session-state/{campaign_id}")
+async def get_session_state(campaign_id: str):
+    try:
+        response = supabase.table("session_state").select("*").eq("campaign_id", campaign_id).execute()
+        if response.data:
+            return {"success": True, "data": response.data[0]}
+        return {"success": True, "data": None}
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao buscar estado: {str(e)}")
+
+@app.post("/session-state/{campaign_id}/countdown")
+async def set_countdown(campaign_id: str, active: bool, duration: int = 60):
+    try:
+        from datetime import datetime, timedelta
+        end_time = (datetime.utcnow() + timedelta(seconds=duration)).isoformat() if active else None
+        data = {
+            "campaign_id": campaign_id,
+            "countdown_active": active,
+            "countdown_end": end_time,
+            "countdown_duration": duration,
+            "updated_at": datetime.utcnow().isoformat()
+        }
+        existing = supabase.table("session_state").select("id").eq("campaign_id", campaign_id).execute()
+        if existing.data:
+            supabase.table("session_state").update(data).eq("campaign_id", campaign_id).execute()
+        else:
+            supabase.table("session_state").insert(data).execute()
+        return {"success": True, "data": data}
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao atualizar countdown: {str(e)}")
+
 
 @app.post("/magic-items/homebrew")
 async def create_homebrew_item(req: MagicItemRequest):
