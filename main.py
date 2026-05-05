@@ -755,6 +755,42 @@ async def get_session_state(campaign_id: str):
     except Exception as e:
         raise HTTPException(500, f"Erro ao buscar estado: {str(e)}")
 
+class SessionRequest(BaseModel):
+    campaign_id: str
+    title: str
+    summary: str = ""
+    session_number: int = 1
+
+@app.get("/sessions/{campaign_id}")
+async def get_sessions(campaign_id: str):
+    try:
+        response = supabase.table("sessions").select("*").eq("campaign_id", campaign_id).order("session_number", desc=True).execute()
+        return {"success": True, "data": response.data}
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao buscar sessões: {str(e)}")
+
+@app.post("/sessions")
+async def create_session(req: SessionRequest):
+    try:
+        data = {
+            "campaign_id": req.campaign_id,
+            "title": req.title,
+            "summary": req.summary,
+            "session_number": req.session_number,
+        }
+        response = supabase.table("sessions").insert(data).execute()
+        return {"success": True, "data": response.data[0]}
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao criar sessão: {str(e)}")
+
+@app.delete("/sessions/{session_id}")
+async def delete_session(session_id: str):
+    try:
+        supabase.table("sessions").delete().eq("id", session_id).execute()
+        return {"success": True}
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao deletar sessão: {str(e)}")
+
 @app.post("/session-state/{campaign_id}/countdown")
 async def set_countdown(campaign_id: str, active: bool, duration: int = 60):
     try:
