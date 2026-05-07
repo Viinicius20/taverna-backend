@@ -744,6 +744,9 @@ class MagicItemRequest(BaseModel):
     name: str
     class_name: str = ""
     rarity: str = ""
+    nome_misterioso: str = ""
+    identificado: bool = False
+
 
 @app.get("/session-state/{campaign_id}")
 async def get_session_state(campaign_id: str):
@@ -768,6 +771,34 @@ async def get_sessions(campaign_id: str):
         return {"success": True, "data": response.data}
     except Exception as e:
         raise HTTPException(500, f"Erro ao buscar sessões: {str(e)}")
+
+
+@app.get("/boato")
+async def gerar_boato():
+    import random
+    falso = random.random() < 0.1
+    tipo = "COMPLETAMENTE FALSO e absurdo" if falso else "VERDADEIRO sobre o mundo"
+    prompt = f"Você é um frequentador de taverna em um mundo de fantasia medieval. Gere um boato curto que estaria circulando na taverna. Este boato é {tipo}. Retorne APENAS um JSON: {{\"boato\": \"frase curta\", \"fonte\": \"quem espalha\", \"falso\": {str(falso).lower()}}}"
+
+    try:
+        response = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=[{"role": "user", "parts": [{"text": prompt}]}]
+        )
+        print(f"BOATO RAW: '{response.text}'")
+        raw = response.text.strip().replace("```json", "").replace("```", "").strip()
+        return {"success": True, "data": json.loads(raw)}
+    except Exception as e:
+        print(f"ERRO BOATO: {e}")
+        raise HTTPException(500, f"Erro ao gerar boato: {str(e)}")
+
+@app.patch("/magic-items/{item_id}/revelar")
+async def revelar_item(item_id: str):
+    try:
+        supabase.table("magic_items").update({"identificado": True}).eq("id", item_id).execute()
+        return {"success": True}
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao revelar item: {str(e)}")
 
 @app.post("/sessions")
 async def create_session(req: SessionRequest):
@@ -838,6 +869,9 @@ Retorne APENAS um JSON válido neste formato:
         raw = response.text.strip().replace("```json", "").replace("```", "").strip()
         item_data = json.loads(raw)
         item_data["is_homebrew"] = True
+        item_data["identificado"] = req.identificado
+        if req.nome_misterioso:
+            item_data["nome_misterioso"] = req.nome_misterioso
         result = supabase.table("magic_items").insert(item_data).execute()
         return {"success": True, "data": item_data}
     except json.JSONDecodeError:
