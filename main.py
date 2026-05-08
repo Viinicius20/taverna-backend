@@ -974,6 +974,75 @@ Retorne APENAS um JSON válido neste formato:
         print(f"ERRO RULES: {e}")
         raise HTTPException(500, {"error": f"Erro ao buscar regra: {str(e)}"})
 
+class EncountroRequest(BaseModel):
+    bioma: str = "floresta"
+    nivel: int = 5
+    contexto: str = ""
+
+@app.post("/encounter/generate")
+async def generate_encounter(req: EncountroRequest):
+    prompt = f"""Você é um mestre de D&D 5e experiente.
+Gere um encontro aleatório para um grupo de nível {req.nivel} em {req.bioma}.
+{f'Contexto adicional: {req.contexto}' if req.contexto else ''}
+
+Retorne APENAS um JSON válido:
+{{
+  "titulo": "Nome do encontro",
+  "descricao": "Descrição atmosférica da cena em 2-3 frases",
+  "inimigos": [
+    {{"nome": "Nome do inimigo", "quantidade": 2, "cr": "1/2"}}
+  ],
+  "diferencial": "Um elemento surpresa ou twist do encontro",
+  "recompensa": "Sugestão de recompensa (XP e itens)"
+}}"""
+    try:
+        response = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=[{"role": "user", "parts": [{"text": prompt}]}]
+        )
+        raw = response.text.strip().replace("```json", "").replace("```", "").strip()
+        return {"success": True, "data": json.loads(raw)}
+    except json.JSONDecodeError:
+        raise HTTPException(400, {"error": "IA não retornou JSON válido"})
+    except Exception as e:
+        print(f"ERRO ENCOUNTER: {e}")
+        raise HTTPException(500, {"error": f"Erro ao gerar encontro: {str(e)}"})
+
+class SecretMessageRequest(BaseModel):
+    campaign_id: str
+    character_id: str
+    message: str
+
+@app.post("/secret-messages")
+async def send_secret_message(req: SecretMessageRequest):
+    try:
+        data = {
+            "campaign_id": req.campaign_id,
+            "character_id": req.character_id,
+            "message": req.message,
+            "lida": False
+        }
+        response = supabase.table("secret_messages").insert(data).execute()
+        return {"success": True, "data": response.data[0]}
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao enviar mensagem: {str(e)}")
+
+@app.get("/secret-messages/{character_id}")
+async def get_secret_messages(character_id: str):
+    try:
+        response = supabase.table("secret_messages").select("*").eq("character_id", character_id).eq("lida", False).execute()
+        return {"success": True, "data": response.data}
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao buscar mensagens: {str(e)}")
+
+@app.patch("/secret-messages/{message_id}/lida")
+async def mark_as_read(message_id: str):
+    try:
+        supabase.table("secret_messages").update({"lida": True}).eq("id", message_id).execute()
+        return {"success": True}
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao marcar mensagem: {str(e)}")
+
 
 # ===================== RODAR =====================
 if __name__ == "__main__":
