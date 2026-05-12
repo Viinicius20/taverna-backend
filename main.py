@@ -746,6 +746,7 @@ class MagicItemRequest(BaseModel):
     rarity: str = ""
     nome_misterioso: str = ""
     identificado: bool = False
+    contexto: str = ""
 
 
 @app.get("/session-state/{campaign_id}")
@@ -851,6 +852,7 @@ async def create_homebrew_item(req: MagicItemRequest):
     prompt = f"""Você é um criador de conteúdo D&D 5e expert.
 Crie um item mágico original chamado EXATAMENTE "{req.name}" (não altere o nome).
 {rarity_instruction}
+{"Contexto e lore: " + req.contexto if req.contexto else ""}'
 
 Retorne APENAS um JSON válido neste formato:
 {{
