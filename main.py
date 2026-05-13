@@ -1048,7 +1048,9 @@ async def mark_as_read(message_id: str):
 @app.delete("/magic-items/{item_id}")
 async def delete_magic_item(item_id: str):
     try:
-        supabase.table("magic_items").delete().eq("id", item_id).execute()
+        print(f"Deletando item: {item_id}")
+        result = supabase.table("magic_items").delete().eq("id", item_id).execute()
+        print(f"Resultado: {result.data}")
         return {"success": True}
     except Exception as e:
         raise HTTPException(500, f"Erro ao deletar item: {str(e)}")
