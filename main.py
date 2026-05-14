@@ -309,29 +309,29 @@ async def level_up(request: Request, req: LevelUpRequest):
     if req.nivel_alvo > 20:
         raise HTTPException(400, "Nível máximo é 20")
 
-        class_name_alvo = getattr(req, 'class_name', None)
+    # ← fora dos ifs agora
+    class_name_alvo = getattr(req, 'class_name', None)
 
-        if isinstance(ficha.get("classes"), list) and len(ficha["classes"]) > 1:
-            if not class_name_alvo:
-                raise HTTPException(400, {
-                    "error": "Escolha qual classe fazer level up",
-                    "classes": [{"name": c["name"], "level": c["level"]} for c in ficha["classes"]]
-                })
+    if isinstance(ficha.get("classes"), list) and len(ficha["classes"]) > 1:
+        if not class_name_alvo:
+            raise HTTPException(400, {
+                "error": "Escolha qual classe fazer level up",
+                "classes": [{"name": c["name"], "level": c["level"]} for c in ficha["classes"]]
+            })
+        classe_encontrada = next(
+            (c for c in ficha["classes"] if c["name"].lower() == class_name_alvo.lower()), None
+        )
+        if not classe_encontrada:
+            raise HTTPException(400, f"Classe '{class_name_alvo}' não encontrada")
+        classe_encontrada["level"] += 1
+        ficha["total_level"] = sum(c.get("level", 1) for c in ficha["classes"])
+    else:
+        if isinstance(ficha.get("classes"), list) and len(ficha["classes"]) == 1:
+            ficha["classes"][0]["level"] += 1
+            ficha["total_level"] = ficha["classes"][0]["level"]
 
-            classe_encontrada = next(
-                (c for c in ficha["classes"] if c["name"].lower() == class_name_alvo.lower()),
-                None
-            )
-            if not classe_encontrada:
-                raise HTTPException(400, f"Classe '{class_name_alvo}' não encontrada")
-
-            classe_encontrada["level"] += 1
-            ficha["total_level"] = sum(c.get("level", 1) for c in ficha["classes"])
-        else:
-            # Se tem só 1 classe, incrementa ela automaticamente
-            if isinstance(ficha.get("classes"), list) and len(ficha["classes"]) == 1:
-                ficha["classes"][0]["level"] += 1
-                ficha["total_level"] = ficha["classes"][0]["level"]
+    # Atualiza o level na ficha antes de mandar pra IA
+    ficha["level"] = req.nivel_alvo
 
     prompt = f"""
     Você é um mestre experiente de RPG. Um personagem subiu de nível.
@@ -343,37 +343,25 @@ async def level_up(request: Request, req: LevelUpRequest):
     Nível atual: {nivel_atual}
     Nível alvo: {req.nivel_alvo}
     Features atuais: {json.dumps(ficha.get("features", []))}
-    Atributos atuais: {json.dumps(ficha.get("attributes", {}))}
+    Atributos atuais: {json.dumps(ficha.get("atributos", ficha.get("attributes", {})))}
     Combat atual: {json.dumps(ficha.get("combat", {}))}
 
-    Atualize a ficha para o nível {req.nivel_alvo}. Recalcule os stats de combate para o novo nível.
+    Atualize a ficha para o nível {req.nivel_alvo}. Retorne APENAS um JSON válido com
+    a ficha COMPLETA atualizada, usando EXATAMENTE os mesmos nomes de campo da ficha original.
+    Não traduza nem renomeie campos. Preserve todos os campos que não precisam mudar.
 
-    Retorne APENAS um JSON válido com a ficha COMPLETA atualizada:
-    {{
-      "name": "{ficha.get("name")}",
-      "race": "{ficha.get("race")}",
-      "class": "{ficha.get("class")}",
-      "level": {req.nivel_alvo},
-      "alignment": "{ficha.get("alignment")}",
-      "background": "{ficha.get("background")}",
-      "attributes": {{ "str": 10, "dex": 15, ... }},
-      "combat": {{
-        "hp": 0,
-        "hp_max": 0,
-        "ac": 0,
-        "initiative": 0,
-        "speed": 30,
-        "proficiency_bonus": 0,
-        "passive_perception": 0,
-        "saving_throws": {{ "str": 0, "dex": 0, "con": 0, "int": 0, "wis": 0, "cha": 0 }},
-        "hit_dice": "1d8"
-      }},
-      "skills": {{ "acrobatics": 5, ... }},
-      "inventory": [...],
-      "features": [...todas as features antigas + novas...],
-      "background_story": "..."
-    }}
+    Campos que DEVEM ser recalculados para o nível {req.nivel_alvo}:
+    - level: {req.nivel_alvo}
+    - combat.hp_max: recalcule com a Hit Die da classe + modificador de CON por nível
+    - combat.hp: igual ao hp_max novo (full heal no level up)
+    - combat.proficiency (ou proficiency_bonus): recalcule pela tabela padrão de D&D 5e
+    - combat.saving_throws: recalcule com o novo bônus de proficiência
+    - features: adicione TODAS as novas features/habilidades do nível {req.nivel_alvo}
+    - Se houver Ability Score Improvement neste nível, aplique nos atributos
+
+    Retorne a ficha com a mesma estrutura recebida, apenas com os campos acima atualizados.
     """
+
     try:
         ficha_nova = gerar_json_com_gemini(prompt)
         supabase.table("characters").update({
@@ -385,23 +373,6 @@ async def level_up(request: Request, req: LevelUpRequest):
         import traceback
         traceback.print_exc()
         raise HTTPException(500, "Erro ao processar level up")
-
-def extrair_texto_pdf(contents):
-    """Extrai texto de um PDF"""
-    try:
-        import PyPDF2
-        from io import BytesIO
-
-        pdf_file = BytesIO(contents)
-        pdf_reader = PyPDF2.PdfReader(pdf_file)
-
-        text = ""
-        for page in pdf_reader.pages:
-                text += page.extract_text()
-
-        return text
-    except Exception as e:
-        return f"Erro ao extrair PDF: {str(e)}"
 
 
 @app.post("/upload-pdf")
