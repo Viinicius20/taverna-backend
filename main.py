@@ -359,6 +359,17 @@ async def level_up(request: Request, req: LevelUpRequest):
     - features: adicione TODAS as novas features/habilidades do nível {req.nivel_alvo}
     - Se houver Ability Score Improvement neste nível, aplique nos atributos
 
+    Campos que DEVEM ser preservados exatamente como estão:
+    - name: {ficha.get("name")}
+    - race: {ficha.get("race")}
+    - background: {ficha.get("background")}
+    - alignment: {ficha.get("alignment")}
+    - classes: preserve o array de classes
+    - skills: preserve as perícias existentes (apenas atualize bônus de proficiência)
+    - inventory: preserve exatamente
+    - background_story: preserve exatamente
+    - xp: preserve exatamente
+
     Retorne a ficha com a mesma estrutura recebida, apenas com os campos acima atualizados.
     """
 
