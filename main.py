@@ -21,6 +21,33 @@ load_dotenv()
 # ===================== CONFIG =====================
 app = FastAPI(title="RPG IA - Backend")
 
+ARQUETIPOS_POR_CLASSE = {
+    "Guerreiro": {"nivel": 3, "arquetipos": ["Campeão", "Cavaleiro Arcano", "Mestre de Batalha", "Cavaleiro Eldritch", "Samurai", "Lutador"]},
+    "Fighter": {"nivel": 3, "arquetipos": ["Champion", "Arcane Archer", "Battle Master", "Eldritch Knight", "Samurai", "Psi Warrior"]},
+    "Monge": {"nivel": 3, "arquetipos": ["Guerreiro da Mão Aberta", "Sombra", "Elemento", "Alma do Sol", "Punho Bêbado"]},
+    "Monk": {"nivel": 3, "arquetipos": ["Open Hand", "Shadow", "Four Elements", "Sun Soul", "Drunken Master"]},
+    "Ladino": {"nivel": 3, "arquetipos": ["Trapaceiro Arcano", "Assassino", "Ladrão", "Swashbuckler", "Inquisidor"]},
+    "Rogue": {"nivel": 3, "arquetipos": ["Arcane Trickster", "Assassin", "Thief", "Swashbuckler", "Inquisitive"]},
+    "Mago": {"nivel": 2, "arquetipos": ["Evocação", "Abjuração", "Ilusão", "Necromancia", "Adivinhação", "Transmutação", "Encantamento", "Conjuração"]},
+    "Wizard": {"nivel": 2, "arquetipos": ["Evocation", "Abjuration", "Illusion", "Necromancy", "Divination", "Transmutation", "Enchantment", "Conjuration"]},
+    "Clérigo": {"nivel": 1, "arquetipos": ["Vida", "Luz", "Conhecimento", "Guerra", "Natureza", "Tempestade", "Enganação", "Morte"]},
+    "Cleric": {"nivel": 1, "arquetipos": ["Life", "Light", "Knowledge", "War", "Nature", "Tempest", "Trickery", "Death"]},
+    "Bardo": {"nivel": 3, "arquetipos": ["Colégio do Saber", "Colégio do Valor", "Colégio da Criação", "Colégio da Eloquência"]},
+    "Bard": {"nivel": 3, "arquetipos": ["College of Lore", "College of Valor", "College of Creation", "College of Eloquence"]},
+    "Bruxo": {"nivel": 1, "arquetipos": ["Arquifada", "Ancião", "Diabo", "Gólem", "Celestial"]},
+    "Warlock": {"nivel": 1, "arquetipos": ["Archfey", "Great Old One", "Fiend", "Hexblade", "Celestial"]},
+    "Paladino": {"nivel": 3, "arquetipos": ["Devoção", "Vingança", "Ancestral", "Glória", "Conquista"]},
+    "Paladin": {"nivel": 3, "arquetipos": ["Devotion", "Vengeance", "Ancients", "Glory", "Conquest"]},
+    "Druida": {"nivel": 2, "arquetipos": ["Círculo da Lua", "Círculo da Terra", "Círculo dos Sonhos", "Círculo do Pastor"]},
+    "Druid": {"nivel": 2, "arquetipos": ["Circle of the Moon", "Circle of the Land", "Circle of Dreams", "Circle of the Shepherd"]},
+    "Patrulheiro": {"nivel": 3, "arquetipos": ["Caçador", "Mestre das Bestas", "Deslizador Horizonte"]},
+    "Ranger": {"nivel": 3, "arquetipos": ["Hunter", "Beast Master", "Gloom Stalker"]},
+    "Feiticeiro": {"nivel": 1, "arquetipos": ["Origem Dracônica", "Magia Selvagem", "Alma Divina", "Sombra"]},
+    "Sorcerer": {"nivel": 1, "arquetipos": ["Draconic Bloodline", "Wild Magic", "Divine Soul", "Shadow Magic"]},
+    "Bárbaro": {"nivel": 3, "arquetipos": ["Berserker", "Totem", "Zealot", "Storm Herald"]},
+    "Barbarian": {"nivel": 3, "arquetipos": ["Berserker", "Totem Warrior", "Zealot", "Storm Herald"]},
+}
+
 limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter
 
@@ -63,6 +90,7 @@ class LevelUpRequest(BaseModel):
     nivel_alvo: int
     system: str = "D&D 5e"
     class_name: Optional[str] = None
+    arquetipo: Optional[str] = None
 
 class HombrewSpellRequest(BaseModel):
     name: str
@@ -345,6 +373,7 @@ async def level_up(request: Request, req: LevelUpRequest):
     Features atuais: {json.dumps(ficha.get("features", []))}
     Atributos atuais: {json.dumps(ficha.get("atributos", ficha.get("attributes", {})))}
     Combat atual: {json.dumps(ficha.get("combat", {}))}
+    arquetipo_txt = f"\nAquétipo escolhido AGORA: {req.arquetipo} — adicione todas as features deste arquétipo." if req.arquetipo else f"\nArquétipo atual: {ficha.get('arquetipo', 'nenhum')}"
 
     Atualize a ficha para o nível {req.nivel_alvo}. Retorne APENAS um JSON válido com
     a ficha COMPLETA atualizada, usando EXATAMENTE os mesmos nomes de campo da ficha original.
@@ -382,6 +411,8 @@ async def level_up(request: Request, req: LevelUpRequest):
             if campo in ficha and (campo not in ficha_nova or not ficha_nova[campo]):
                 ficha_nova[campo] = ficha[campo]
 
+        if req.arquetipo:
+            ficha_nova["arquetipo"] = req.arquetipo
         supabase.table("characters").update({
             "data": ficha_nova,
             "name": ficha_nova.get("name", ficha.get("name"))
@@ -1025,6 +1056,13 @@ async def get_secret_messages(character_id: str):
         return {"success": True, "data": response.data}
     except Exception as e:
         raise HTTPException(500, f"Erro ao buscar mensagens: {str(e)}")
+
+@app.get("/arquetipos/{class_name}")
+async def get_arquetipos(class_name: str):
+    info = ARQUETIPOS_POR_CLASSE.get(class_name)
+    if not info:
+        return {"nivel": 3, "arquetipos": []}
+    return info
 
 @app.patch("/secret-messages/{message_id}/lida")
 async def mark_as_read(message_id: str):
