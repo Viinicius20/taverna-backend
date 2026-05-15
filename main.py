@@ -449,6 +449,7 @@ IMPORTANTE: inventory deve ser array de STRINGS simples, nunca objetos.
 IMPORTANTE: inventory deve ser array de STRINGS simples, nunca objetos.
 IMPORTANTE: "alignment" deve ser APENAS o alinhamento moral (ex: Leal Bom, Caótico Neutro, Neutro). NÃO coloque arquétipo ou subclasse aqui.
 IMPORTANTE: "background" deve ser o antecedente do personagem (ex: Haunted One, Sage, Criminal).
+IMPORTANTE: "skills" deve conter TODAS as 18 perícias do D&D 5e, mesmo as não-proficientes. Use o modificador correto de cada uma (modificador do atributo base ± bônus de proficiência/expertise).
 {{
   "name": "...",
   "race": "...",
@@ -464,7 +465,13 @@ IMPORTANTE: "background" deve ser o antecedente do personagem (ex: Haunted One, 
     "saving_throws": {{"str": 3, "dex": 7, "con": 2, "int": -1, "wis": 3, "cha": -1}},
     "hit_dice": "4d8+1d8"
   }},
-  "skills": {{"acrobatics": 7, "stealth": 10}},
+  "skills": {{
+  "acrobatics": 7, "animal_handling": 3, "arcana": -1, "athletics": 6,
+  "deception": -1, "history": -1, "insight": 6, "intimidation": -1,
+  "investigation": 2, "medicine": 3, "nature": -1, "perception": 6,
+  "performance": -1, "persuasion": -1, "religion": 2, "sleight_of_hand": 4,
+  "stealth": 10, "survival": 3
+}},
   "inventory": ["item 1 (qtd, peso)", "item 2 (qtd, peso)"],
   "features": [],
   "spellcasting": {{"ability": "", "dc": 0, "spells": []}},
