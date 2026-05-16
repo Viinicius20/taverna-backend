@@ -234,6 +234,8 @@ async def create_character(request: Request, req: CreateCharacterRequest):
         # Calcular total_level
         total_level = sum(c.get("level", 1) for c in ficha.get("classes", []))
         ficha["total_level"] = total_level
+        if not ficha.get("arquetipo") and ficha.get("subclass"):
+            ficha["arquetipo"] = ficha["subclass"]
         ficha.pop("class", None)
 
         insert_data = {
