@@ -101,44 +101,49 @@ class HombrewSpellRequest(BaseModel):
 from google.genai.errors import ServerError
 import time
 
+GEMINI_KEYS = [
+    os.getenv("GEMINI_API_KEY"),
+    os.getenv("GEMINI_API_KEY_2"),
+    os.getenv("GEMINI_API_KEY_3"),
+    os.getenv("GEMINI_API_KEY_4"),
+]
+
 def gerar_json_com_gemini(prompt: str, max_retries=3) -> dict:
     last_error = None
 
-    for tentativa in range(max_retries):
-        try:
-            response = client.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    temperature=0.7,
-                    response_mime_type="application/json"
-                )
-            )
+    for key in GEMINI_KEYS:
+        if not key:
+            continue
+        client_atual = genai.Client(api_key=key)
 
-            text = response.text.strip()
-
-            if text.startswith("```json"):
-                text = text[7:-3].strip()
-
-            return json.loads(text)
-
-        except ServerError as e:
-            last_error = e
-            print(f"[IA] 503 tentativa {tentativa+1}/{max_retries}")
-            time.sleep(2 * (tentativa + 1))  # backoff progressivo
-
-        except json.JSONDecodeError as e:
-            print("[IA] JSON inválido, tentando corrigir...")
+        for tentativa in range(max_retries):
             try:
-                # tentativa simples de correção
-                text = text.split("```")[-1]
+                response = client_atual.models.generate_content(
+                    model="gemini-2.5-flash",
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        temperature=0.7,
+                        response_mime_type="application/json"
+                    )
+                )
+                text = response.text.strip()
+                if text.startswith("```json"):
+                    text = text[7:-3].strip()
                 return json.loads(text)
-            except:
-                last_error = e
 
-        except Exception as e:
-            last_error = e
-            break
+            except Exception as e:
+                err_str = str(e)
+                if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                    print(f"[IA] Quota esgotada na key, tentando próxima...")
+                    last_error = e
+                    break  # vai pra próxima key
+                elif "503" in err_str:
+                    last_error = e
+                    print(f"[IA] 503 tentativa {tentativa+1}/{max_retries}")
+                    time.sleep(2 * (tentativa + 1))
+                else:
+                    last_error = e
+                    break
 
     raise last_error
 
