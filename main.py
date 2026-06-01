@@ -16,6 +16,7 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from fastapi.responses import JSONResponse
 from fastapi import FastAPI, HTTPException, UploadFile, File, Request
+from fastapi import Body
 
 load_dotenv()
 
@@ -1122,6 +1123,14 @@ async def delete_magic_item(item_id: str):
         return {"success": True}
     except Exception as e:
         raise HTTPException(500, f"Erro ao deletar item: {str(e)}")
+
+@app.patch("/characters/{character_id}")
+async def patch_character(character_id: str, req: dict = Body(...)):
+    try:
+        response = supabase.table("characters").update(req).eq("id", character_id).execute()
+        return {"success": True, "data": response.data}
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao atualizar: {str(e)}")
 
 
 # ===================== RODAR =====================
