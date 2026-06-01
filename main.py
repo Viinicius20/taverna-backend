@@ -1085,6 +1085,7 @@ async def profile_login(req: ProfileLoginRequest):
         }).execute()
         return {"success": True, "data": novo.data[0]}
     except Exception as e:
+        print(f"ERRO PROFILE LOGIN: {str(e)}")
         raise HTTPException(500, f"Erro ao fazer login: {str(e)}")
 
 @app.get("/secret-messages/{character_id}")
