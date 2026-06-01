@@ -623,13 +623,15 @@ Retorne APENAS o JSON, sem explicações.
         raise HTTPException(500, f"Erro ao processar NPC: {str(e)}")
 
 @app.get("/characters")
-async def list_characters(user_id: str = "", campaign_id: str = ""):
+async def list_characters(user_id: str = "", campaign_id: str = "", sem_dono: bool = False):
     try:
         query = supabase.table("characters").select("*")
         if user_id:
             query = query.eq("user_id", user_id)
         if campaign_id:
             query = query.eq("campaign_id", campaign_id)
+        if sem_dono:
+            query = query.is_("user_id", "null")
         response = query.order("created_at", desc=True).execute()
         return {"success": True, "data": response.data}
     except Exception as e:
