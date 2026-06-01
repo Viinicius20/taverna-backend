@@ -282,6 +282,7 @@ async def create_character(request: Request, req: CreateCharacterRequest):
 @app.put("/characters/{character_id}")
 async def update_character(character_id: str, req: UpdateCharacterRequest):
     try:
+        print(f"SALVANDO: ataques={req.data.get('ataques')}, notas={req.data.get('notas_privadas')}")
         update_data = {"data": req.data}
         if req.name:
             update_data["name"] = req.name
@@ -1133,10 +1134,6 @@ async def patch_character(character_id: str, req: dict = Body(...)):
         return {"success": True, "data": response.data}
     except Exception as e:
         raise HTTPException(500, f"Erro ao atualizar: {str(e)}")
-
-async def update_character(character_id: str, req: UpdateCharacterRequest):
-    try:
-        print(f"SALVANDO: ataques={req.data.get('ataques')}, notas={req.data.get('notas_privadas')}")
 
 
 # ===================== RODAR =====================
