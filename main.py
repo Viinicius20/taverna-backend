@@ -1,6 +1,7 @@
 import os
 import json
 import fitz  # PyMuPDF
+import uuid
 from google.genai.errors import ServerError
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
@@ -1080,6 +1081,7 @@ async def profile_login(req: ProfileLoginRequest):
 
         # Cria novo profile
         novo = supabase.table("profiles").insert({
+            "id": str(uuid.uuid4()),
             "username": req.username,
             "role": "jogador"
         }).execute()
