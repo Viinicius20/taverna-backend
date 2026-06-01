@@ -1064,6 +1064,29 @@ async def send_secret_message(req: SecretMessageRequest):
     except Exception as e:
         raise HTTPException(500, f"Erro ao enviar mensagem: {str(e)}")
 
+
+class ProfileLoginRequest(BaseModel):
+    username: str
+
+
+@app.post("/profiles/login")
+async def profile_login(req: ProfileLoginRequest):
+    try:
+        # Busca por username
+        res = supabase.table("profiles").select("*").eq("username", req.username).execute()
+
+        if res.data:
+            return {"success": True, "data": res.data[0]}
+
+        # Cria novo profile
+        novo = supabase.table("profiles").insert({
+            "username": req.username,
+            "role": "jogador"
+        }).execute()
+        return {"success": True, "data": novo.data[0]}
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao fazer login: {str(e)}")
+
 @app.get("/secret-messages/{character_id}")
 async def get_secret_messages(character_id: str):
     try:
