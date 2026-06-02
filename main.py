@@ -1176,7 +1176,7 @@ Retorne APENAS um JSON válido:
   "ac": 14,
   "ac_type": "Armadura de couro",
   "speed": "9 metros",
-  "attributes": {"str": 16, "dex": 13, "con": 14, "int": 10, "wis": 11, "cha": 8}},
+  "attributes": {"str": 16, "dex": 13, "con": 14, "int": 10, "wis": 11, "cha": 8},
   "saving_throws": {{}},
   "skills": {{}},
   "damage_resistances": "",
