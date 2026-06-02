@@ -1176,7 +1176,7 @@ Retorne APENAS um JSON válido:
   "ac": 14,
   "ac_type": "Armadura de couro",
   "speed": "9 metros",
-  "attributes": {{"str": 16, "dex": 13, "con": 14, "int": 10, "wis": 11, "cha": 8}},
+  "attributes": {"str": 16, "dex": 13, "con": 14, "int": 10, "wis": 11, "cha": 8}},
   "saving_throws": {{}},
   "skills": {{}},
   "damage_resistances": "",
@@ -1203,20 +1203,20 @@ Retorne APENAS um JSON válido:
         monstro["is_homebrew"] = True
         result = supabase.table("bestiary").insert(monstro).execute()
         monstro["id"] = result.data[0]["id"] if result.data else None
-        return {{"success": True, "data": monstro}}
+        return {"success": True, "data": monstro}
     except Exception as e:
         import traceback
         traceback.print_exc()
-        raise HTTPException(500, f"Erro ao gerar monstro: {{str(e)}}")
+        raise HTTPException(500, f"Erro ao gerar monstro: {str(e)}")
 
 
 @app.delete("/bestiary/{monster_id}")
 async def delete_monster(monster_id: str):
     try:
         supabase.table("bestiary").delete().eq("id", monster_id).execute()
-        return {{"success": True}}
+        return {"success": True}
     except Exception as e:
-        raise HTTPException(500, f"Erro ao deletar monstro: {{str(e)}}")
+        raise HTTPException(500, f"Erro ao deletar monstro: {str(e)}")
 
 
 # ===================== RODAR =====================
