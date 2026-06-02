@@ -1196,7 +1196,7 @@ Retorne APENAS um JSON válido:
     try:
         response = client.models.generate_content(
             model="gemini-2.5-flash",
-            contents=[{{"role": "user", "parts": [{{"text": prompt}}]}}]
+            contents=[{"role": "user", "parts": [{"text": prompt}]}]
         )
         raw = response.text.strip().replace("```json", "").replace("```", "").strip()
         monstro = json.loads(raw)
