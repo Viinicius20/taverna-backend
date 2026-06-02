@@ -1136,6 +1136,89 @@ async def patch_character(character_id: str, req: dict = Body(...)):
         raise HTTPException(500, f"Erro ao atualizar: {str(e)}")
 
 
+@app.get("/bestiary")
+async def get_bestiary(name: str = "", cr: str = "", type: str = ""):
+    try:
+        query = supabase.table("bestiary").select("*")
+        if name:
+            query = query.ilike("name", f"%{name}%")
+        if cr:
+            query = query.eq("cr", cr)
+        if type:
+            query = query.eq("type", type)
+        result = query.order("name").execute()
+        return {"success": True, "data": result.data}
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao buscar bestiário: {str(e)}")
+
+
+@app.post("/bestiary/generate")
+@limiter.limit("10/minute")
+async def generate_bestiary(request: Request, nome: str, cr: str = "", tipo: str = "", descricao: str = ""):
+    cr_instruction = f'O CR DEVE ser exatamente "{cr}".' if cr else 'Escolha o CR adequado.'
+    tipo_instruction = f'O tipo DEVE ser "{tipo}".' if tipo else ''
+
+    prompt = f"""Você é um mestre experiente de D&D 5e. Crie um monstro/criatura para o bestiário.
+Nome: {nome}
+{cr_instruction}
+{tipo_instruction}
+Descrição adicional: {descricao or 'Nenhuma'}
+
+Retorne APENAS um JSON válido:
+{{
+  "name": "{nome}",
+  "cr": "1",
+  "type": "Humanoide",
+  "size": "Médio",
+  "alignment": "Neutro",
+  "hp": 45,
+  "hp_dice": "6d8+12",
+  "ac": 14,
+  "ac_type": "Armadura de couro",
+  "speed": "9 metros",
+  "attributes": {{"str": 16, "dex": 13, "con": 14, "int": 10, "wis": 11, "cha": 8}},
+  "saving_throws": {{}},
+  "skills": {{}},
+  "damage_resistances": "",
+  "damage_immunities": "",
+  "condition_immunities": "",
+  "senses": "Visão normal 18 metros",
+  "languages": "Comum",
+  "features": [{{"name": "Resistência à Magia", "description": "Tem vantagem em salvaguardas contra magias."}}],
+  "actions": [{{"name": "Golpe de Espada", "description": "Ataque com arma corpo a corpo: +5 para acertar, alcance 1,5m, 1d8+3 dano cortante."}}],
+  "bonus_actions": [],
+  "reactions": [],
+  "legendary_actions": [],
+  "description": "Descrição do monstro...",
+  "is_homebrew": true
+}}"""
+
+    try:
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=[{{"role": "user", "parts": [{{"text": prompt}}]}}]
+        )
+        raw = response.text.strip().replace("```json", "").replace("```", "").strip()
+        monstro = json.loads(raw)
+        monstro["is_homebrew"] = True
+        result = supabase.table("bestiary").insert(monstro).execute()
+        monstro["id"] = result.data[0]["id"] if result.data else None
+        return {{"success": True, "data": monstro}}
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(500, f"Erro ao gerar monstro: {{str(e)}}")
+
+
+@app.delete("/bestiary/{monster_id}")
+async def delete_monster(monster_id: str):
+    try:
+        supabase.table("bestiary").delete().eq("id", monster_id).execute()
+        return {{"success": True}}
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao deletar monstro: {{str(e)}}")
+
+
 # ===================== RODAR =====================
 if __name__ == "__main__":
     import uvicorn
