@@ -1,10 +1,12 @@
 import os
 import json
-import fitz  # PyMuPDF
 import uuid
+import time
+import fitz
 from google.genai.errors import ServerError
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, UploadFile, File, Request, Body
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from typing import Optional
 from pydantic import BaseModel
 from supabase import create_client, Client
@@ -14,9 +16,12 @@ from google.genai import types
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
-from fastapi.responses import JSONResponse
-from fastapi import FastAPI, HTTPException, UploadFile, File, Request
-from fastapi import Body
+
+load_dotenv()
+
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 load_dotenv()
 
@@ -1217,6 +1222,96 @@ async def delete_monster(monster_id: str):
         return {"success": True}
     except Exception as e:
         raise HTTPException(500, f"Erro ao deletar monstro: {str(e)}")
+
+
+@app.post("/gallery/upload")
+async def upload_gallery(
+        file: UploadFile = File(...),
+        campaign_id: str = "",
+        type: str = "map"
+):
+    try:
+        contents = await file.read()
+        filename = f"{uuid.uuid4()}_{file.filename}"
+
+        # Upload pro Supabase Storage
+        supabase.storage.from_("gallery").upload(
+            filename,
+            contents,
+            {"content-type": file.content_type}
+        )
+
+        # URL pública
+        url = supabase.storage.from_("gallery").get_public_url(filename)
+
+        # Salva na tabela
+        data = {
+            "name": file.filename,
+            "url": url,
+            "type": type,
+            "revealed": False,
+        }
+        if campaign_id:
+            data["campaign_id"] = campaign_id
+
+        res = supabase.table("gallery").insert(data).execute()
+        return {"success": True, "data": res.data[0]}
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao fazer upload: {str(e)}")
+
+
+@app.get("/gallery")
+async def get_gallery(campaign_id: str = ""):
+    try:
+        query = supabase.table("gallery").select("*").order("created_at", desc=True)
+        if campaign_id:
+            query = query.eq("campaign_id", campaign_id)
+        res = query.execute()
+        return {"success": True, "data": res.data}
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao buscar galeria: {str(e)}")
+
+
+@app.patch("/gallery/{image_id}/reveal")
+async def reveal_image(image_id: str):
+    try:
+        # Tira o reveal de todas primeiro
+        supabase.table("gallery").update({"revealed": False}).neq("id",
+                                                                  "00000000-0000-0000-0000-000000000000").execute()
+        # Revela só essa
+        res = supabase.table("gallery").update({"revealed": True}).eq("id", image_id).execute()
+        return {"success": True, "data": res.data[0]}
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao revelar imagem: {str(e)}")
+
+
+@app.patch("/gallery/{image_id}/hide")
+async def hide_image(image_id: str):
+    try:
+        res = supabase.table("gallery").update({"revealed": False}).eq("id", image_id).execute()
+        return {"success": True, "data": res.data[0]}
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao esconder imagem: {str(e)}")
+
+
+@app.delete("/gallery/{image_id}")
+async def delete_gallery_image(image_id: str):
+    try:
+        # Busca a imagem pra pegar o filename
+        res = supabase.table("gallery").select("*").eq("id", image_id).single().execute()
+        image = res.data
+
+        # Extrai filename da URL
+        filename = image["url"].split("/")[-1]
+
+        # Deleta do storage
+        supabase.storage.from_("gallery").remove([filename])
+
+        # Deleta da tabela
+        supabase.table("gallery").delete().eq("id", image_id).execute()
+        return {"success": True}
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao deletar imagem: {str(e)}")
 
 
 # ===================== RODAR =====================
