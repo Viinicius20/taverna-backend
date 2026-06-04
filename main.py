@@ -1234,17 +1234,17 @@ async def upload_gallery(
         contents = await file.read()
         filename = f"{uuid.uuid4()}_{file.filename}"
 
-        # Upload pro Supabase Storage
+        print(f"UPLOAD: filename={filename}, size={len(contents)}, type={file.content_type}")
+
         supabase.storage.from_("gallery").upload(
             filename,
             contents,
             {"content-type": file.content_type}
         )
 
-        # URL pública
         url = supabase.storage.from_("gallery").get_public_url(filename)
+        print(f"URL: {url}")
 
-        # Salva na tabela
         data = {
             "name": file.filename,
             "url": url,
@@ -1257,6 +1257,8 @@ async def upload_gallery(
         res = supabase.table("gallery").insert(data).execute()
         return {"success": True, "data": res.data[0]}
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(500, f"Erro ao fazer upload: {str(e)}")
 
 
