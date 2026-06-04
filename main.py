@@ -1315,6 +1315,46 @@ async def delete_gallery_image(image_id: str):
     except Exception as e:
         raise HTTPException(500, f"Erro ao deletar imagem: {str(e)}")
 
+@app.get("/map-tokens/{campaign_id}")
+async def get_map_tokens(campaign_id: str):
+    try:
+        res = supabase.table("map_tokens").select("*").eq("campaign_id", campaign_id).execute()
+        return {"success": True, "data": res.data}
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao buscar tokens: {str(e)}")
+
+@app.post("/map-tokens")
+async def add_map_token(data: dict = Body(...)):
+    try:
+        res = supabase.table("map_tokens").insert(data).execute()
+        return {"success": True, "data": res.data[0]}
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao adicionar token: {str(e)}")
+
+@app.patch("/map-tokens/{token_id}/position")
+async def update_token_position(token_id: str, data: dict = Body(...)):
+    try:
+        res = supabase.table("map_tokens").update({"x": data["x"], "y": data["y"]}).eq("id", token_id).execute()
+        return {"success": True, "data": res.data[0]}
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao mover token: {str(e)}")
+
+@app.patch("/map-tokens/{token_id}/label")
+async def update_token_label(token_id: str, data: dict = Body(...)):
+    try:
+        res = supabase.table("map_tokens").update({"label": data["label"]}).eq("id", token_id).execute()
+        return {"success": True, "data": res.data[0]}
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao atualizar label: {str(e)}")
+
+@app.delete("/map-tokens/{token_id}")
+async def delete_map_token(token_id: str):
+    try:
+        supabase.table("map_tokens").delete().eq("id", token_id).execute()
+        return {"success": True}
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao remover token: {str(e)}")
+
 
 # ===================== RODAR =====================
 if __name__ == "__main__":
