@@ -16,6 +16,7 @@ from google.genai import types
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
+from fastapi import FastAPI, HTTPException, UploadFile, File, Request, Body, Form
 
 load_dotenv()
 
@@ -1228,8 +1229,8 @@ async def delete_monster(monster_id: str):
 async def upload_gallery(
         file: UploadFile = File(...),
         campaign_id: str = "",
-        type: str = "map",
-        category: str = ""
+        type: str = Form("map"),
+        category: str = Form("")
 ):
     try:
         contents = await file.read()
