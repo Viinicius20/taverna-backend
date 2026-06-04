@@ -1228,13 +1228,12 @@ async def delete_monster(monster_id: str):
 async def upload_gallery(
         file: UploadFile = File(...),
         campaign_id: str = "",
-        type: str = "map"
+        type: str = "map",
+        category: str = ""
 ):
     try:
         contents = await file.read()
         filename = f"{uuid.uuid4()}_{file.filename}"
-
-        print(f"UPLOAD: filename={filename}, size={len(contents)}, type={file.content_type}")
 
         supabase.storage.from_("gallery").upload(
             filename,
@@ -1243,12 +1242,12 @@ async def upload_gallery(
         )
 
         url = supabase.storage.from_("gallery").get_public_url(filename)
-        print(f"URL: {url}")
 
         data = {
             "name": file.filename,
             "url": url,
             "type": type,
+            "category": category,
             "revealed": False,
         }
         if campaign_id:
