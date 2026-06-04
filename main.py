@@ -1347,6 +1347,22 @@ async def update_token_label(token_id: str, data: dict = Body(...)):
     except Exception as e:
         raise HTTPException(500, f"Erro ao atualizar label: {str(e)}")
 
+@app.patch("/map-tokens/{token_id}/rotation")
+async def update_token_rotation(token_id: str, data: dict = Body(...)):
+    try:
+        res = supabase.table("map_tokens").update({"rotation": data["rotation"]}).eq("id", token_id).execute()
+        return {"success": True, "data": res.data[0]}
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao rotacionar token: {str(e)}")
+
+@app.patch("/map-tokens/{token_id}/scale")
+async def update_token_scale(token_id: str, data: dict = Body(...)):
+    try:
+        res = supabase.table("map_tokens").update({"scale": data["scale"]}).eq("id", token_id).execute()
+        return {"success": True, "data": res.data[0]}
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao escalar token: {str(e)}")
+
 @app.delete("/map-tokens/{token_id}")
 async def delete_map_token(token_id: str):
     try:
