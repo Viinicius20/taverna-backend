@@ -3,6 +3,8 @@ import json
 import uuid
 import time
 import fitz
+import random
+import string
 from google.genai.errors import ServerError
 from fastapi import FastAPI, HTTPException, UploadFile, File, Request, Body
 from fastapi.middleware.cors import CORSMiddleware
@@ -145,7 +147,7 @@ def gerar_json_com_gemini(prompt: str, max_retries=3) -> dict:
                     print(f"[IA] Quota esgotada na key, tentando próxima...")
                     last_error = e
                     break  # vai pra próxima key
-                elif "503" in err_str:
+                elif "503" in err_str or "UNAVAILABLE" in err_str:
                     last_error = e
                     print(f"[IA] 503 tentativa {tentativa+1}/{max_retries}")
                     time.sleep(2 * (tentativa + 1))
@@ -1371,6 +1373,74 @@ async def delete_map_token(token_id: str):
     except Exception as e:
         raise HTTPException(500, f"Erro ao remover token: {str(e)}")
 
+
+def gerar_codigo_campanha():
+    return ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
+
+
+@app.post("/campaigns")
+async def criar_campanha(data: dict = Body(...)):
+    try:
+        codigo = gerar_codigo_campanha()
+        res = supabase.table("campaigns").insert({
+            "name": data.get("name"),
+            "description": data.get("description", ""),
+            "owner_id": data.get("owner_id"),
+            "code": codigo
+        }).execute()
+        return {"success": True, "data": res.data[0]}
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao criar campanha: {str(e)}")
+
+
+@app.get("/campaigns/{campaign_id}")
+async def get_campanha(campaign_id: str):
+    try:
+        res = supabase.table("campaigns").select("*").eq("id", campaign_id).single().execute()
+        return {"success": True, "data": res.data}
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao buscar campanha: {str(e)}")
+
+
+@app.get("/campaigns/by-owner/{owner_id}")
+async def get_campanhas_by_owner(owner_id: str):
+    try:
+        res = supabase.table("campaigns").select("*").eq("owner_id", owner_id).execute()
+        return {"success": True, "data": res.data}
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao buscar campanhas: {str(e)}")
+
+
+@app.post("/campaigns/join")
+async def entrar_campanha(data: dict = Body(...)):
+    try:
+        # Busca campanha pelo código
+        res = supabase.table("campaigns").select("*").eq("code", data.get("code").upper()).single().execute()
+        if not res.data:
+            raise HTTPException(404, "Campanha não encontrada")
+        campanha = res.data
+
+        # Adiciona membro
+        supabase.table("campaign_members").insert({
+            "campaign_id": campanha["id"],
+            "user_id": data.get("user_id"),
+            "role": "jogador"
+        }).execute()
+
+        return {"success": True, "data": campanha}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao entrar na campanha: {str(e)}")
+
+
+@app.get("/campaigns/members/{campaign_id}")
+async def get_membros(campaign_id: str):
+    try:
+        res = supabase.table("campaign_members").select("*, profiles(*)").eq("campaign_id", campaign_id).execute()
+        return {"success": True, "data": res.data}
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao buscar membros: {str(e)}")
 
 # ===================== RODAR =====================
 if __name__ == "__main__":
