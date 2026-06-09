@@ -1386,6 +1386,7 @@ async def criar_campanha(data: dict = Body(...)):
             "name": data.get("name"),
             "description": data.get("description", ""),
             "owner_id": data.get("owner_id"),
+            "master_id": data.get("owner_id"),
             "code": codigo
         }).execute()
         return {"success": True, "data": res.data[0]}
