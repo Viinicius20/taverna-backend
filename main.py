@@ -1393,15 +1393,6 @@ async def criar_campanha(data: dict = Body(...)):
         raise HTTPException(500, f"Erro ao criar campanha: {str(e)}")
 
 
-@app.get("/campaigns/{campaign_id}")
-async def get_campanha(campaign_id: str):
-    try:
-        res = supabase.table("campaigns").select("*").eq("id", campaign_id).single().execute()
-        return {"success": True, "data": res.data}
-    except Exception as e:
-        raise HTTPException(500, f"Erro ao buscar campanha: {str(e)}")
-
-
 @app.get("/campaigns/by-owner/{owner_id}")
 async def get_campanhas_by_owner(owner_id: str):
     try:
@@ -1409,6 +1400,14 @@ async def get_campanhas_by_owner(owner_id: str):
         return {"success": True, "data": res.data}
     except Exception as e:
         raise HTTPException(500, f"Erro ao buscar campanhas: {str(e)}")
+
+@app.get("/campaigns/{campaign_id}")
+async def get_campanha(campaign_id: str):
+    try:
+        res = supabase.table("campaigns").select("*").eq("id", campaign_id).single().execute()
+        return {"success": True, "data": res.data}
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao buscar campanha: {str(e)}")
 
 
 @app.post("/campaigns/join")
