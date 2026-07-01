@@ -19,12 +19,17 @@ from slowapi import Limiter
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from fastapi import FastAPI, HTTPException, UploadFile, File, Request, Body, Form
+from pywebpush import webpush, WebPushException
 
 load_dotenv()
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+VAPID_PRIVATE_KEY = os.getenv("VAPID_PRIVATE_KEY")
+VAPID_PUBLIC_KEY = os.getenv("VAPID_PUBLIC_KEY")
+VAPID_CLAIMS = {"sub": "mailto:viniciusamoury0403@gmail.com"}
 
 load_dotenv()
 
@@ -1063,6 +1068,7 @@ class SecretMessageRequest(BaseModel):
     character_id: str
     message: str
 
+
 @app.post("/secret-messages")
 async def send_secret_message(req: SecretMessageRequest):
     try:
@@ -1073,6 +1079,22 @@ async def send_secret_message(req: SecretMessageRequest):
             "lida": False
         }
         response = supabase.table("secret_messages").insert(data).execute()
+
+        # Busca o user_id do personagem pra saber pra qual dispositivo mandar
+        char_res = supabase.table("characters") \
+            .select("user_id") \
+            .eq("id", req.character_id) \
+            .single() \
+            .execute()
+
+        # Se o personagem tiver dono, manda push notification
+        if char_res.data and char_res.data.get("user_id"):
+            await enviar_push_notification(
+                char_res.data["user_id"],
+                "🔮 Sussurro do Mestre",
+                req.message
+            )
+
         return {"success": True, "data": response.data[0]}
     except Exception as e:
         raise HTTPException(500, f"Erro ao enviar mensagem: {str(e)}")
@@ -1441,6 +1463,92 @@ async def get_membros(campaign_id: str):
         return {"success": True, "data": res.data}
     except Exception as e:
         raise HTTPException(500, f"Erro ao buscar membros: {str(e)}")
+
+
+@app.post("/push/subscribe")
+async def salvar_subscription(data: dict = Body(...)):
+    """
+    Salva a assinatura do dispositivo do usuário.
+    Quando o usuário aceita notificações, o browser gera uma assinatura única
+    pra aquele dispositivo. A gente salva isso aqui pra usar depois.
+    """
+    try:
+        user_id = data.get("user_id")
+        subscription = data.get("subscription")
+
+        # Verifica se já tem assinatura pra esse dispositivo
+        # (evita duplicatas se o usuário abrir o site várias vezes)
+        existing = supabase.table("push_subscriptions") \
+            .select("*") \
+            .eq("user_id", user_id) \
+            .execute()
+
+        if existing.data:
+            # Atualiza a assinatura existente
+            supabase.table("push_subscriptions") \
+                .update({"subscription": subscription}) \
+                .eq("user_id", user_id) \
+                .execute()
+        else:
+            # Cria nova assinatura
+            supabase.table("push_subscriptions") \
+                .insert({"user_id": user_id, "subscription": subscription}) \
+                .execute()
+
+        return {"success": True}
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao salvar subscription: {str(e)}")
+
+
+@app.get("/push/vapid-public-key")
+async def get_vapid_public_key():
+    """
+    Retorna a chave pública VAPID pro frontend.
+    O browser precisa dessa chave pra criar a assinatura do dispositivo.
+    É seguro expor — é a "fechadura", não a "chave".
+    """
+    return {"public_key": VAPID_PUBLIC_KEY}
+
+
+async def enviar_push_notification(user_id: str, titulo: str, mensagem: str):
+    """
+    Função auxiliar que manda notificação push pra todos os dispositivos de um usuário.
+    Um usuário pode ter vários dispositivos (celular + tablet + PC).
+    """
+    try:
+        # Busca todas as assinaturas do usuário
+        res = supabase.table("push_subscriptions") \
+            .select("*") \
+            .eq("user_id", user_id) \
+            .execute()
+
+        if not res.data:
+            return  # Usuário não tem assinatura, ignora
+
+        payload = json.dumps({
+            "title": titulo,
+            "body": mensagem,
+            "icon": "/logo192.png"
+        })
+
+        for sub in res.data:
+            try:
+                webpush(
+                    subscription_info=sub["subscription"],
+                    data=payload,
+                    vapid_private_key=VAPID_PRIVATE_KEY,
+                    vapid_claims=VAPID_CLAIMS
+                )
+            except WebPushException as e:
+                print(f"Erro ao enviar push: {e}")
+                # Se a assinatura expirou, deleta do banco
+                if e.response and e.response.status_code == 410:
+                    supabase.table("push_subscriptions") \
+                        .delete() \
+                        .eq("id", sub["id"]) \
+                        .execute()
+    except Exception as e:
+        print(f"Erro no push notification: {str(e)}")
 
 # ===================== RODAR =====================
 if __name__ == "__main__":
