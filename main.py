@@ -34,11 +34,21 @@ VAPID_CLAIMS = {"sub": "mailto:viniciusamoury0403@gmail.com"}
 
 def get_vapid_private_pem():
     try:
-        padding = '=' * (4 - len(VAPID_PRIVATE_KEY) % 4)
-        pem_bytes = base64.urlsafe_b64decode(VAPID_PRIVATE_KEY + padding)
-        return pem_bytes.decode('utf-8')
+        # Tenta ler do arquivo primeiro
+        with open("vapid_private.pem", "r") as f:
+            return f.read()
     except:
-        return VAPID_PRIVATE_KEY
+        # Fallback pra variável de ambiente
+        key = VAPID_PRIVATE_KEY
+        if not key:
+            return None
+        if 'BEGIN' in key:
+            return key.replace('\\n', '\n')
+        try:
+            padding = '=' * (4 - len(key) % 4)
+            return base64.urlsafe_b64decode(key + padding).decode('utf-8')
+        except:
+            return key
 
 load_dotenv()
 
