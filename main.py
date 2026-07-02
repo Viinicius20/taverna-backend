@@ -5,6 +5,7 @@ import time
 import fitz
 import random
 import string
+import base64
 from google.genai.errors import ServerError
 from fastapi import FastAPI, HTTPException, UploadFile, File, Request, Body
 from fastapi.middleware.cors import CORSMiddleware
@@ -30,6 +31,14 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 VAPID_PRIVATE_KEY = os.getenv("VAPID_PRIVATE_KEY")
 VAPID_PUBLIC_KEY = os.getenv("VAPID_PUBLIC_KEY")
 VAPID_CLAIMS = {"sub": "mailto:viniciusamoury0403@gmail.com"}
+
+def get_vapid_private_pem():
+    try:
+        padding = '=' * (4 - len(VAPID_PRIVATE_KEY) % 4)
+        pem_bytes = base64.urlsafe_b64decode(VAPID_PRIVATE_KEY + padding)
+        return pem_bytes.decode('utf-8')
+    except:
+        return VAPID_PRIVATE_KEY
 
 load_dotenv()
 
@@ -1536,7 +1545,7 @@ async def enviar_push_notification(user_id: str, titulo: str, mensagem: str):
                 webpush(
                     subscription_info=sub["subscription"],
                     data=payload,
-                    vapid_private_key=VAPID_PRIVATE_KEY,
+                    vapid_private_key=get_vapid_private_pem(),
                     vapid_claims=VAPID_CLAIMS
                 )
             except WebPushException as e:
