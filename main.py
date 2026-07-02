@@ -1550,6 +1550,14 @@ async def enviar_push_notification(user_id: str, titulo: str, mensagem: str):
     except Exception as e:
         print(f"Erro no push notification: {str(e)}")
 
+@app.get("/debug/vapid")
+async def debug_vapid():
+    return {
+        "public_key_exists": bool(VAPID_PUBLIC_KEY),
+        "private_key_exists": bool(VAPID_PRIVATE_KEY),
+        "public_key_preview": VAPID_PUBLIC_KEY[:20] if VAPID_PUBLIC_KEY else None
+    }
+
 # ===================== RODAR =====================
 if __name__ == "__main__":
     import uvicorn
