@@ -6,6 +6,7 @@ import fitz
 import random
 import string
 import base64
+import tempfile
 from google.genai.errors import ServerError
 from fastapi import FastAPI, HTTPException, UploadFile, File, Request, Body
 from fastapi.middleware.cors import CORSMiddleware
@@ -1521,19 +1522,14 @@ async def get_vapid_public_key():
 
 
 async def enviar_push_notification(user_id: str, titulo: str, mensagem: str):
-    """
-    Função auxiliar que manda notificação push pra todos os dispositivos de um usuário.
-    Um usuário pode ter vários dispositivos (celular + tablet + PC).
-    """
     try:
-        # Busca todas as assinaturas do usuário
         res = supabase.table("push_subscriptions") \
             .select("*") \
             .eq("user_id", user_id) \
             .execute()
 
         if not res.data:
-            return  # Usuário não tem assinatura, ignora
+            return
 
         payload = json.dumps({
             "title": titulo,
@@ -1541,22 +1537,31 @@ async def enviar_push_notification(user_id: str, titulo: str, mensagem: str):
             "icon": "/logo192.png"
         })
 
-        for sub in res.data:
-            try:
-                webpush(
-                    subscription_info=sub["subscription"],
-                    data=payload,
-                    vapid_private_key=get_vapid_private_key_object(),
-                    vapid_claims=VAPID_CLAIMS
-                )
-            except WebPushException as e:
-                print(f"Erro ao enviar push: {e}")
-                # Se a assinatura expirou, deleta do banco
-                if e.response and e.response.status_code == 410:
-                    supabase.table("push_subscriptions") \
-                        .delete() \
-                        .eq("id", sub["id"]) \
-                        .execute()
+        # Salva a chave em arquivo temporário
+        key_pem = VAPID_PRIVATE_KEY.replace('\\n', '\n')
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.pem', delete=False) as f:
+            f.write(key_pem)
+            temp_path = f.name
+
+        try:
+            for sub in res.data:
+                try:
+                    webpush(
+                        subscription_info=sub["subscription"],
+                        data=payload,
+                        vapid_private_key=temp_path,
+                        vapid_claims=VAPID_CLAIMS
+                    )
+                except WebPushException as e:
+                    print(f"Erro ao enviar push: {e}")
+                    if e.response and e.response.status_code == 410:
+                        supabase.table("push_subscriptions") \
+                            .delete() \
+                            .eq("id", sub["id"]) \
+                            .execute()
+        finally:
+            os.unlink(temp_path)  # deleta o arquivo temporário
+
     except Exception as e:
         print(f"Erro no push notification: {str(e)}")
 
