@@ -32,13 +32,14 @@ VAPID_PRIVATE_KEY = os.getenv("VAPID_PRIVATE_KEY")
 VAPID_PUBLIC_KEY = os.getenv("VAPID_PUBLIC_KEY")
 VAPID_CLAIMS = {"sub": "mailto:viniciusamoury0403@gmail.com"}
 
-def get_vapid_private_pem():
+from cryptography.hazmat.primitives.serialization import load_pem_private_key
+
+def get_vapid_private_key_object():
     key = VAPID_PRIVATE_KEY
     if not key:
         return None
-    result = key.replace('\\n', '\n')
-    print(f"VAPID KEY PREVIEW: {repr(result[:50])}")
-    return result
+    pem = key.replace('\\n', '\n').encode('utf-8')
+    return load_pem_private_key(pem, password=None)
 
 load_dotenv()
 
@@ -1545,7 +1546,7 @@ async def enviar_push_notification(user_id: str, titulo: str, mensagem: str):
                 webpush(
                     subscription_info=sub["subscription"],
                     data=payload,
-                    vapid_private_key=get_vapid_private_pem(),
+                    vapid_private_key=get_vapid_private_key_object(),
                     vapid_claims=VAPID_CLAIMS
                 )
             except WebPushException as e:
