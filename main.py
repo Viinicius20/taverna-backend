@@ -33,22 +33,12 @@ VAPID_PUBLIC_KEY = os.getenv("VAPID_PUBLIC_KEY")
 VAPID_CLAIMS = {"sub": "mailto:viniciusamoury0403@gmail.com"}
 
 def get_vapid_private_pem():
-    try:
-        # Tenta ler do arquivo primeiro
-        with open("vapid_private.pem", "r") as f:
-            return f.read()
-    except:
-        # Fallback pra variável de ambiente
-        key = VAPID_PRIVATE_KEY
-        if not key:
-            return None
-        if 'BEGIN' in key:
-            return key.replace('\\n', '\n')
-        try:
-            padding = '=' * (4 - len(key) % 4)
-            return base64.urlsafe_b64decode(key + padding).decode('utf-8')
-        except:
-            return key
+    key = VAPID_PRIVATE_KEY
+    if not key:
+        return None
+    result = key.replace('\\n', '\n')
+    print(f"VAPID KEY PREVIEW: {repr(result[:50])}")
+    return result
 
 load_dotenv()
 
