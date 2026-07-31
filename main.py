@@ -1511,6 +1511,31 @@ async def salvar_subscription(data: dict = Body(...)):
         raise HTTPException(500, f"Erro ao salvar subscription: {str(e)}")
 
 
+@app.post("/notify/item")
+async def notificar_item(data: dict = Body(...)):
+    try:
+        character_id = data.get("character_id")
+        item_nome = data.get("item_nome")
+
+        # Busca o user_id do personagem destinatário
+        char_res = supabase.table("characters") \
+            .select("user_id") \
+            .eq("id", character_id) \
+            .single() \
+            .execute()
+
+        if char_res.data and char_res.data.get("user_id"):
+            await enviar_push_notification(
+                char_res.data["user_id"],
+                "📦 Item Recebido",
+                f"Você recebeu: {item_nome}"
+            )
+
+        return {"success": True}
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao notificar: {str(e)}")
+
+
 @app.get("/push/vapid-public-key")
 async def get_vapid_public_key():
     """
