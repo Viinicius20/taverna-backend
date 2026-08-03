@@ -1543,13 +1543,13 @@ async def upload_avatar(character_id: str, file: UploadFile = File(...)):
         filename = f"{character_id}.{file.filename.split('.')[-1]}"
         print(f"AVATAR: filename={filename}, size={len(contents)}, type={file.content_type}")
 
-        supabase.storage.from_("avatars").upload(
+        supabase.storage.from_("Avatars").upload(
             filename,
             contents,
             {"content-type": file.content_type, "upsert": "true"}
         )
 
-        url = supabase.storage.from_("avatars").get_public_url(filename)
+        url = supabase.storage.from_("Avatars").get_public_url(filename)
         print(f"AVATAR URL: {url}")
 
         supabase.table("characters").update({"avatar_url": url}).eq("id", character_id).execute()
