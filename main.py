@@ -1536,6 +1536,29 @@ async def notificar_item(data: dict = Body(...)):
         raise HTTPException(500, f"Erro ao notificar: {str(e)}")
 
 
+@app.post("/characters/{character_id}/avatar")
+async def upload_avatar(character_id: str, file: UploadFile = File(...)):
+    try:
+        contents = await file.read()
+        filename = f"{character_id}.{file.filename.split('.')[-1]}"
+
+        # Upload pro bucket avatars
+        supabase.storage.from_("avatars").upload(
+            filename,
+            contents,
+            {"content-type": file.content_type, "upsert": "true"}
+        )
+
+        url = supabase.storage.from_("avatars").get_public_url(filename)
+
+        # Salva a URL no personagem
+        supabase.table("characters").update({"avatar_url": url}).eq("id", character_id).execute()
+
+        return {"success": True, "url": url}
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao fazer upload do avatar: {str(e)}")
+
+
 @app.get("/push/vapid-public-key")
 async def get_vapid_public_key():
     """
