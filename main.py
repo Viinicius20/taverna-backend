@@ -1541,8 +1541,8 @@ async def upload_avatar(character_id: str, file: UploadFile = File(...)):
     try:
         contents = await file.read()
         filename = f"{character_id}.{file.filename.split('.')[-1]}"
+        print(f"AVATAR: filename={filename}, size={len(contents)}, type={file.content_type}")
 
-        # Upload pro bucket avatars
         supabase.storage.from_("avatars").upload(
             filename,
             contents,
@@ -1550,12 +1550,14 @@ async def upload_avatar(character_id: str, file: UploadFile = File(...)):
         )
 
         url = supabase.storage.from_("avatars").get_public_url(filename)
+        print(f"AVATAR URL: {url}")
 
-        # Salva a URL no personagem
         supabase.table("characters").update({"avatar_url": url}).eq("id", character_id).execute()
 
         return {"success": True, "url": url}
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(500, f"Erro ao fazer upload do avatar: {str(e)}")
 
 
