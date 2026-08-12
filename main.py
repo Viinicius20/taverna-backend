@@ -1623,6 +1623,38 @@ async def debug_vapid():
         "public_key_preview": VAPID_PUBLIC_KEY[:20] if VAPID_PUBLIC_KEY else None
     }
 
+
+@app.get("/bestiary/random-description")
+async def bestiary_random_description():
+    try:
+        # Busca todos os monstros
+        res = supabase.table("bestiary").select("name, type, cr, description").execute()
+        if not res.data:
+            raise HTTPException(404, "Nenhum monstro encontrado")
+
+        # Escolhe um aleatório
+        monstro = random.choice(res.data)
+
+        prompt = f"""Você é um narrador de RPG de fantasia sombria.
+Escreva uma descrição atmosférica e ameaçadora de 3 a 4 frases sobre o monstro "{monstro['name']}" (tipo: {monstro['type']}, CR {monstro['cr']}).
+Foque na aparência, presença e o que os aventureiros sentem ao se deparar com ele.
+Não mencione stats ou números. Escreva em português.
+Responda APENAS com a descrição, sem título ou introdução."""
+
+        descricao = await gerar_texto_com_gemini(prompt)
+
+        return {
+            "success": True,
+            "data": {
+                "nome": monstro["name"],
+                "tipo": monstro["type"],
+                "cr": monstro["cr"],
+                "descricao": descricao
+            }
+        }
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao gerar descrição: {str(e)}")
+
 # ===================== RODAR =====================
 if __name__ == "__main__":
     import uvicorn
