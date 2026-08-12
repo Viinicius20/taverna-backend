@@ -359,6 +359,29 @@ Itens mágicos: apropriados pro nível {req.nivel_medio}, criativos e únicos.""
         print(f"ERRO LOOT: {e}")
         raise HTTPException(500, {"error": f"Erro ao gerar loot: {str(e)}"})
 
+async def gerar_texto_com_gemini(prompt: str) -> str:
+    last_error = None
+    for key in GEMINI_KEYS:
+        if not key:
+            continue
+        client_atual = genai.Client(api_key=key)
+        for tentativa in range(3):
+            try:
+                response = client_atual.models.generate_content(
+                    model="gemini-2.5-flash",
+                    contents=prompt
+                )
+                return response.text.strip()
+            except Exception as e:
+                err_str = str(e)
+                if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str or "503" in err_str or "UNAVAILABLE" in err_str:
+                    last_error = e
+                    time.sleep(2 * (tentativa + 1))
+                else:
+                    last_error = e
+                    break
+    raise last_error or Exception("Todas as keys falharam")
+
 
 @app.post("/level-up")
 @limiter.limit("10/minute")
