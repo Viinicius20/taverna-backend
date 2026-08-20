@@ -122,6 +122,16 @@ class HombrewSpellRequest(BaseModel):
     name: str
     class_name: str
 
+class AsiRequest(BaseModel):
+    character_id: str
+    ficha_atual: dict
+    class_name: str
+    nivel_alvo: int
+    tipo: str  # "atributos" | "feat"
+    alocacao: Optional[dict] = None      # ex: {"str": 1, "dex": 1}
+    feat_nome: Optional[str] = None
+    feat_descricao: Optional[str] = None
+
 
 # ===================== FUNÇÃO AUXILIAR GEMINI =====================
 from google.genai.errors import ServerError
@@ -456,6 +466,7 @@ async def level_up(request: Request, req: LevelUpRequest):
     - inventory: preserve exatamente
     - background_story: preserve exatamente
     - xp: preserve exatamente
+    - arquetipo: NÃO preencha este campo com texto descritivo. Deixe null/vazio se o personagem ainda não escolheu um arquétipo/subclasse.
 
     Retorne a ficha com a mesma estrutura recebida, apenas com os campos acima atualizados.
     """
@@ -1686,6 +1697,61 @@ Responda APENAS com a descrição, sem título ou introdução."""
         }
     except Exception as e:
         raise HTTPException(500, f"Erro ao gerar descrição: {str(e)}")
+
+@app.post("/aplicar-asi")
+@limiter.limit("10/minute")
+async def aplicar_asi(request: Request, req: AsiRequest):
+    ficha = req.ficha_atual
+    atributos = ficha.get("atributos", ficha.get("attributes", {}))
+    pontos_disponiveis = ficha.get("asi_points", 0) + 2  # +2 do ASI deste nível
+
+    if req.tipo == "atributos":
+        if not req.alocacao:
+            raise HTTPException(400, "Envie a alocação de pontos")
+
+        custo_total = 0
+        simulado = dict(atributos)
+        for attr, delta in req.alocacao.items():
+            if attr not in atributos:
+                raise HTTPException(400, f"Atributo '{attr}' inválido")
+            valor = simulado[attr]
+            for _ in range(delta):
+                custo_total += 2 if valor >= 18 else 1
+                valor += 1
+            if valor > 20:
+                raise HTTPException(400, f"'{attr}' não pode passar de 20")
+            simulado[attr] = valor
+
+        if custo_total > pontos_disponiveis:
+            raise HTTPException(400, f"Pontos insuficientes: precisa {custo_total}, tem {pontos_disponiveis}")
+
+        for attr, delta in req.alocacao.items():
+            atributos[attr] += delta
+
+        ficha["atributos"] = atributos
+        ficha["asi_points"] = pontos_disponiveis - custo_total
+
+    elif req.tipo == "feat":
+        if not req.feat_nome:
+            raise HTTPException(400, "Informe o nome do feat")
+        feats = ficha.get("feats", [])
+        feats.append({"nome": req.feat_nome, "descricao": req.feat_descricao or ""})
+        ficha["feats"] = feats
+        ficha["asi_points"] = pontos_disponiveis  # não gastou nada nos atributos, fica banked
+
+    else:
+        raise HTTPException(400, "Tipo inválido")
+
+    # marca esse nível/classe como resolvido pra não pedir de novo
+    historico = ficha.get("asi_historico", {})
+    niveis = historico.get(req.class_name, [])
+    if req.nivel_alvo not in niveis:
+        niveis.append(req.nivel_alvo)
+    historico[req.class_name] = niveis
+    ficha["asi_historico"] = historico
+
+    supabase.table("characters").update({"data": ficha}).eq("id", req.character_id).execute()
+    return {"success": True, "data": ficha}
 
 # ===================== RODAR =====================
 if __name__ == "__main__":
