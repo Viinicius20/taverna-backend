@@ -129,8 +129,8 @@ import time
 
 GEMINI_KEYS = [
     os.getenv("GEMINI_API_KEY"),
-    os.getenv("GEMINI_API_KEY_2"),
     os.getenv("GEMINI_API_KEY_3"),
+    os.getenv("GEMINI_API_KEY_2"),
     os.getenv("GEMINI_API_KEY_4"),
 ]
 
