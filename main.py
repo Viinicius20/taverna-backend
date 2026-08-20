@@ -469,8 +469,17 @@ async def level_up(request: Request, req: LevelUpRequest):
             if campo in ficha and (campo not in ficha_nova or not ficha_nova[campo]):
                 ficha_nova[campo] = ficha[campo]
 
+        # Preservar arquetipos já resolvidos de outras classes antes de aplicar o novo
+        if isinstance(ficha.get("arquetipos"), dict):
+            ficha_nova["arquetipos"] = {**ficha["arquetipos"], **ficha_nova.get("arquetipos", {})}
+
         if req.arquetipo:
-            ficha_nova["arquetipo"] = req.arquetipo
+            if class_name_alvo:
+                if "arquetipos" not in ficha_nova or not isinstance(ficha_nova.get("arquetipos"), dict):
+                    ficha_nova["arquetipos"] = dict(ficha.get("arquetipos", {}))
+                ficha_nova["arquetipos"][class_name_alvo] = req.arquetipo
+            else:
+                ficha_nova["arquetipo"] = req.arquetipo
         supabase.table("characters").update({
             "data": ficha_nova,
             "name": ficha_nova.get("name", ficha.get("name"))
