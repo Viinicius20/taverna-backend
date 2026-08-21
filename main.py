@@ -450,7 +450,7 @@ async def level_up(request: Request, req: LevelUpRequest):
     # Atualiza o level na ficha antes de mandar pra IA
     ficha["level"] = req.nivel_alvo
 
-    arquetipo_txt = f"\nAquétipo escolhido AGORA: {req.arquetipo} — adicione todas as features deste arquétipo." if req.arquetipo else f"\nArquétipo atual: {ficha.get('arquetipo', 'nenhum')}"
+    arquetipo_txt = f"\nArquétipo escolhido AGORA para a classe {class_name_alvo}: {req.arquetipo} — adicione todas as features deste arquétipo." if req.arquetipo else f"\nArquétipo atual: {ficha.get('arquetipo', 'nenhum')}"
 
     prompt = f"""
     Você é um mestre experiente de RPG. Um personagem subiu de nível.
@@ -461,6 +461,7 @@ async def level_up(request: Request, req: LevelUpRequest):
     Classes: {json.dumps(ficha.get("classes", [{"name": ficha.get("class")}]))}
     Nível atual: {nivel_atual}
     Nível alvo: {req.nivel_alvo}
+    {arquetipo_txt}
     Features atuais: {json.dumps(ficha.get("features", []))}
     Atributos atuais: {json.dumps(ficha.get("atributos", ficha.get("attributes", {})))}
     Combat atual: {json.dumps(ficha.get("combat", {}))}
