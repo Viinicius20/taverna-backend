@@ -369,28 +369,50 @@ Itens mágicos: apropriados pro nível {req.nivel_medio}, criativos e únicos.""
         print(f"ERRO LOOT: {e}")
         raise HTTPException(500, {"error": f"Erro ao gerar loot: {str(e)}"})
 
-async def gerar_texto_com_gemini(prompt: str) -> str:
+def gerar_texto_com_gemini(parts_ou_prompt, max_retries=3):
+    """Aceita string simples (prompt) ou lista de parts (multimodal, ex: PDF com imagens)."""
     last_error = None
-    for key in GEMINI_KEYS:
+    contents = parts_ou_prompt if isinstance(parts_ou_prompt, list) else parts_ou_prompt
+
+    for idx, key in enumerate(GEMINI_KEYS):
         if not key:
             continue
         client_atual = genai.Client(api_key=key)
-        for tentativa in range(3):
+
+        for tentativa in range(max_retries):
             try:
-                response = client_atual.models.generate_content(
-                    model="gemini-2.5-flash",
-                    contents=prompt
-                )
+                if isinstance(parts_ou_prompt, list):
+                    response = client_atual.models.generate_content(
+                        model="gemini-2.5-flash",
+                        contents=[{"role": "user", "parts": parts_ou_prompt}]
+                    )
+                else:
+                    response = client_atual.models.generate_content(
+                        model="gemini-2.5-flash",
+                        contents=parts_ou_prompt,
+                        config=types.GenerateContentConfig(
+                            temperature=0.7,
+                            response_mime_type="application/json"
+                        )
+                    )
                 return response.text.strip()
+
             except Exception as e:
                 err_str = str(e)
-                if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str or "503" in err_str or "UNAVAILABLE" in err_str:
+                if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                    print(f"[IA] Key {idx+1}: quota esgotada, indo pra próxima key...")
                     last_error = e
+                    break
+                elif "503" in err_str or "UNAVAILABLE" in err_str:
+                    last_error = e
+                    print(f"[IA] Key {idx+1}: 503 (tentativa {tentativa+1}/{max_retries})")
                     time.sleep(2 * (tentativa + 1))
                 else:
                     last_error = e
+                    print(f"[IA] Key {idx+1}: erro não tratado — {err_str[:200]}")
                     break
-    raise last_error or Exception("Todas as keys falharam")
+
+    raise last_error
 
 
 @app.post("/level-up")
@@ -576,11 +598,7 @@ Retorne APENAS o JSON, sem explicações.
     # Chama Gemini com visão
     try:
         import json
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=[{"role": "user", "parts": parts}]
-        )
-        raw = response.text.strip()
+        raw = gerar_texto_com_gemini(parts)
         raw = raw.replace("```json", "").replace("```", "").strip()
         ficha = json.loads(raw)
 
