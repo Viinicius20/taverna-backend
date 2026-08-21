@@ -48,30 +48,41 @@ load_dotenv()
 app = FastAPI(title="RPG IA - Backend")
 
 ARQUETIPOS_POR_CLASSE = {
-    "Guerreiro": {"nivel": 3, "arquetipos": ["Campeão", "Cavaleiro Arcano", "Mestre de Batalha", "Cavaleiro Eldritch", "Samurai", "Lutador"]},
-    "Fighter": {"nivel": 3, "arquetipos": ["Champion", "Arcane Archer", "Battle Master", "Eldritch Knight", "Samurai", "Psi Warrior"]},
-    "Monge": {"nivel": 3, "arquetipos": ["Guerreiro da Mão Aberta", "Sombra", "Elemento", "Alma do Sol", "Punho Bêbado"]},
-    "Monk": {"nivel": 3, "arquetipos": ["Open Hand", "Shadow", "Four Elements", "Sun Soul", "Drunken Master"]},
-    "Ladino": {"nivel": 3, "arquetipos": ["Trapaceiro Arcano", "Assassino", "Ladrão", "Swashbuckler", "Inquisidor"]},
-    "Rogue": {"nivel": 3, "arquetipos": ["Arcane Trickster", "Assassin", "Thief", "Swashbuckler", "Inquisitive"]},
-    "Mago": {"nivel": 2, "arquetipos": ["Evocação", "Abjuração", "Ilusão", "Necromancia", "Adivinhação", "Transmutação", "Encantamento", "Conjuração"]},
-    "Wizard": {"nivel": 2, "arquetipos": ["Evocation", "Abjuration", "Illusion", "Necromancy", "Divination", "Transmutation", "Enchantment", "Conjuration"]},
-    "Clérigo": {"nivel": 1, "arquetipos": ["Vida", "Luz", "Conhecimento", "Guerra", "Natureza", "Tempestade", "Enganação", "Morte"]},
-    "Cleric": {"nivel": 1, "arquetipos": ["Life", "Light", "Knowledge", "War", "Nature", "Tempest", "Trickery", "Death"]},
-    "Bardo": {"nivel": 3, "arquetipos": ["Colégio do Saber", "Colégio do Valor", "Colégio da Criação", "Colégio da Eloquência"]},
-    "Bard": {"nivel": 3, "arquetipos": ["College of Lore", "College of Valor", "College of Creation", "College of Eloquence"]},
-    "Bruxo": {"nivel": 1, "arquetipos": ["Arquifada", "Ancião", "Diabo", "Gólem", "Celestial"]},
-    "Warlock": {"nivel": 1, "arquetipos": ["Archfey", "Great Old One", "Fiend", "Hexblade", "Celestial"]},
-    "Paladino": {"nivel": 3, "arquetipos": ["Devoção", "Vingança", "Ancestral", "Glória", "Conquista"]},
-    "Paladin": {"nivel": 3, "arquetipos": ["Devotion", "Vengeance", "Ancients", "Glory", "Conquest"]},
-    "Druida": {"nivel": 2, "arquetipos": ["Círculo da Lua", "Círculo da Terra", "Círculo dos Sonhos", "Círculo do Pastor"]},
-    "Druid": {"nivel": 2, "arquetipos": ["Circle of the Moon", "Circle of the Land", "Circle of Dreams", "Circle of the Shepherd"]},
-    "Patrulheiro": {"nivel": 3, "arquetipos": ["Caçador", "Mestre das Bestas", "Deslizador Horizonte"]},
-    "Ranger": {"nivel": 3, "arquetipos": ["Hunter", "Beast Master", "Gloom Stalker"]},
-    "Feiticeiro": {"nivel": 1, "arquetipos": ["Origem Dracônica", "Magia Selvagem", "Alma Divina", "Sombra"]},
-    "Sorcerer": {"nivel": 1, "arquetipos": ["Draconic Bloodline", "Wild Magic", "Divine Soul", "Shadow Magic"]},
-    "Bárbaro": {"nivel": 3, "arquetipos": ["Berserker", "Totem", "Zealot", "Storm Herald"]},
-    "Barbarian": {"nivel": 3, "arquetipos": ["Berserker", "Totem Warrior", "Zealot", "Storm Herald"]},
+    "Guerreiro": {"nivel": 3, "arquetipos": ["Campeão", "Cavaleiro Arcano", "Mestre de Batalha", "Cavaleiro Eldritch", "Samurai", "Lutador", "Cavaleiro Rúnico", "Guerreiro Psíquico"]},
+    "Fighter": {"nivel": 3, "arquetipos": ["Champion", "Arcane Archer", "Battle Master", "Eldritch Knight", "Samurai", "Psi Warrior", "Rune Knight", "Cavalier"]},
+
+    "Monge": {"nivel": 3, "arquetipos": ["Guerreiro da Mão Aberta", "Sombra", "Elemento", "Alma do Sol", "Punho Bêbado", "Kensei"]},
+    "Monk": {"nivel": 3, "arquetipos": ["Open Hand", "Shadow", "Four Elements", "Sun Soul", "Drunken Master", "Kensei"]},
+
+    "Ladino": {"nivel": 3, "arquetipos": ["Trapaceiro Arcano", "Assassino", "Ladrão", "Swashbuckler", "Inquisidor", "Fantasma", "Espadachim da Alma"]},
+    "Rogue": {"nivel": 3, "arquetipos": ["Arcane Trickster", "Assassin", "Thief", "Swashbuckler", "Inquisitive", "Phantom", "Soulknife"]},
+
+    "Mago": {"nivel": 2, "arquetipos": ["Evocação", "Abjuração", "Ilusão", "Necromancia", "Adivinhação", "Transmutação", "Encantamento", "Conjuração", "Ordem dos Escribas", "Cantor de Espadas"]},
+    "Wizard": {"nivel": 2, "arquetipos": ["Evocation", "Abjuration", "Illusion", "Necromancy", "Divination", "Transmutation", "Enchantment", "Conjuration", "Order of Scribes", "Bladesinging"]},
+
+    "Clérigo": {"nivel": 1, "arquetipos": ["Vida", "Luz", "Conhecimento", "Guerra", "Natureza", "Tempestade", "Enganação", "Morte", "Paz", "Crepúsculo"]},
+    "Cleric": {"nivel": 1, "arquetipos": ["Life", "Light", "Knowledge", "War", "Nature", "Tempest", "Trickery", "Death", "Peace", "Twilight"]},
+
+    "Bardo": {"nivel": 3, "arquetipos": ["Colégio do Saber", "Colégio do Valor", "Colégio da Criação", "Colégio da Eloquência", "Colégio dos Sussurros"]},
+    "Bard": {"nivel": 3, "arquetipos": ["College of Lore", "College of Valor", "College of Creation", "College of Eloquence", "College of Whispers"]},
+
+    "Bruxo": {"nivel": 1, "arquetipos": ["Arquifada", "Ancião", "Diabo", "Gólem", "Celestial", "Lâmina Amaldiçoada"]},
+    "Warlock": {"nivel": 1, "arquetipos": ["Archfey", "Great Old One", "Fiend", "Hexblade", "Celestial", "Undying"]},
+
+    "Paladino": {"nivel": 3, "arquetipos": ["Devoção", "Vingança", "Ancestral", "Glória", "Conquista", "Redenção"]},
+    "Paladin": {"nivel": 3, "arquetipos": ["Devotion", "Vengeance", "Ancients", "Glory", "Conquest", "Redemption"]},
+
+    "Druida": {"nivel": 2, "arquetipos": ["Círculo da Lua", "Círculo da Terra", "Círculo dos Sonhos", "Círculo do Pastor", "Círculo das Estrelas"]},
+    "Druid": {"nivel": 2, "arquetipos": ["Circle of the Moon", "Circle of the Land", "Circle of Dreams", "Circle of the Shepherd", "Circle of Stars"]},
+
+    "Patrulheiro": {"nivel": 3, "arquetipos": ["Caçador", "Mestre das Bestas", "Deslizador Horizonte", "Andarilho Feérico", "Enxameador"]},
+    "Ranger": {"nivel": 3, "arquetipos": ["Hunter", "Beast Master", "Gloom Stalker", "Fey Wanderer", "Swarmkeeper"]},
+
+    "Feiticeiro": {"nivel": 1, "arquetipos": ["Origem Dracônica", "Magia Selvagem", "Alma Divina", "Sombra", "Mente Aberrante", "Alma Mecânica"]},
+    "Sorcerer": {"nivel": 1, "arquetipos": ["Draconic Bloodline", "Wild Magic", "Divine Soul", "Shadow Magic", "Aberrant Mind", "Clockwork Soul"]},
+
+    "Bárbaro": {"nivel": 3, "arquetipos": ["Berserker", "Totem", "Zealot", "Storm Herald", "Magia Selvagem", "Fera Ancestral"]},
+    "Barbarian": {"nivel": 3, "arquetipos": ["Berserker", "Totem Warrior", "Zealot", "Storm Herald", "Wild Magic", "Beast"]},
 }
 
 limiter = Limiter(key_func=get_remote_address)
