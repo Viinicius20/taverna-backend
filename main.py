@@ -1050,9 +1050,8 @@ async def create_homebrew_spell(req: HombrewSpellRequest):
             model='gemini-2.5-flash',
             contents=prompt
         )
-        spell_json = response.text
-        spell_json = response.text
-        spell_data = json.loads(spell_json)
+        spell_json = gerar_texto_com_gemini(prompt)
+        spell_data = json.loads(spell_json.replace("```json", "").replace("```", "").strip())
 
         result = supabase.table('spells').insert({
             'name': spell_data.get('name'),
@@ -1082,6 +1081,89 @@ async def create_homebrew_spell(req: HombrewSpellRequest):
 class RulesRequest(BaseModel):
     query: str
     system: str = "D&D 5e"
+
+@app.post('/spells/homebrew')
+async def create_homebrew_spell(req: HombrewSpellRequest):
+    prompt = f"""
+    Você é um criador de conteúdo D&D 5e expert.
+
+    Crie uma magia original chamada "{req.name}" para a classe {req.class_name}.
+
+    Siga EXATAMENTE este formato JSON (sem markdown, sem explicações):
+    {{
+      "name": "{req.name}",
+      "level": 2,
+      "school": "Evocation",
+      "class_name": "{req.class_name}",
+      "description": "Descrição curta da magia",
+      "mechanics": "Como funciona em jogo (efeitos, salvaguardas, etc)",
+      "range": "60 feet",
+      "duration": "Concentration, up to 1 minute",
+      "components": "V, S, M"
+    }}
+    """
+
+    try:
+        spell_json = gerar_texto_com_gemini(prompt)
+        spell_json = spell_json.replace("```json", "").replace("```", "").strip()
+        spell_data = json.loads(spell_json)
+
+        result = supabase.table('spells').insert({
+            'name': spell_data.get('name'),
+            'level': spell_data.get('level'),
+            'school': spell_data.get('school'),
+            'class_name': spell_data.get('class_name'),
+            'description': spell_data.get('description'),
+            'mechanics': spell_data.get('mechanics'),
+            'range': spell_data.get('range'),
+            'duration': spell_data.get('duration'),
+            'components': spell_data.get('components'),
+            'is_homebrew': True
+        }).execute()
+
+        return {'success': True, 'data': spell_data, 'message': f"Magia '{spell_data.get('name')}' criada com sucesso!"}
+
+    except json.JSONDecodeError:
+        raise HTTPException(400, {"error": "IA não retornou JSON válido"})
+    except Exception as e:
+        print(f"ERRO HOMEBREW: {e}")
+        raise HTTPException(500, {"error": f"Erro ao criar magia: {str(e)}"})
+
+
+class ManualSpellRequest(BaseModel):
+    name: str
+    level: int = 0
+    school: str = ""
+    class_name: str
+    description: str = ""
+    mechanics: str = ""
+    range: str = ""
+    duration: str = ""
+    components: str = ""
+
+@app.post('/spells/manual')
+async def create_manual_spell(req: ManualSpellRequest):
+    if not req.name.strip():
+        raise HTTPException(400, "Nome da magia é obrigatório")
+
+    result = supabase.table('spells').insert({
+        'name': req.name,
+        'level': req.level,
+        'school': req.school,
+        'class_name': req.class_name,
+        'description': req.description,
+        'mechanics': req.mechanics,
+        'range': req.range,
+        'duration': req.duration,
+        'components': req.components,
+        'is_homebrew': True
+    }).execute()
+
+    return {
+        'success': True,
+        'data': result.data[0] if result.data else None,
+        'message': f"Magia '{req.name}' criada com sucesso!"
+    }
 
 @app.post("/rules/search")
 async def search_rules(req: RulesRequest):
