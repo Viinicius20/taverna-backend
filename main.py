@@ -143,6 +143,11 @@ class AsiRequest(BaseModel):
     feat_nome: Optional[str] = None
     feat_descricao: Optional[str] = None
 
+class GerarArteRequest(BaseModel):
+    tipo: str  # "npc" | "item"
+    id: str
+    descricao_customizada: str = ""  # opcional, se o usuário quiser escrever a própria descrição
+
 
 # ===================== FUNÇÃO AUXILIAR GEMINI =====================
 from google.genai.errors import ServerError
@@ -1864,6 +1869,50 @@ async def aplicar_asi(request: Request, req: AsiRequest):
 
     supabase.table("characters").update({"data": ficha}).eq("id", req.character_id).execute()
     return {"success": True, "data": ficha}
+
+@app.post("/gerar-arte")
+async def gerar_arte(req: GerarArteRequest):
+    import urllib.parse
+
+    if req.tipo == "npc":
+        result = supabase.table("npcs").select("*").eq("id", req.id).single().execute()
+        npc = result.data
+        if not npc:
+            raise HTTPException(404, "NPC não encontrado")
+
+        if req.descricao_customizada.strip():
+            prompt = f"fantasy character portrait, {req.descricao_customizada}, detailed digital painting, dnd art style"
+        else:
+            prompt = (
+                f"fantasy character portrait, {npc.get('race', '')} {npc.get('class', '')}, "
+                f"{npc.get('description', '')}, detailed digital painting, dnd art style"
+            )
+        tabela = "npcs"
+
+    elif req.tipo == "item":
+        result = supabase.table("magic_items").select("*").eq("id", req.id).single().execute()
+        item = result.data
+        if not item:
+            raise HTTPException(404, "Item não encontrado")
+
+        if req.descricao_customizada.strip():
+            prompt = f"fantasy magic item, {req.descricao_customizada}, detailed item icon, dnd art style, dark background"
+        else:
+            prompt = (
+                f"fantasy magic item, {item.get('name', '')}, {item.get('rarity', '')}, "
+                f"{item.get('description', '')}, detailed item icon, dnd art style, dark background"
+            )
+        tabela = "magic_items"
+
+    else:
+        raise HTTPException(400, "Tipo inválido")
+
+    prompt_encoded = urllib.parse.quote(prompt)
+    image_url = f"https://image.pollinations.ai/prompt/{prompt_encoded}?width=768&height=768&nologo=true"
+
+    supabase.table(tabela).update({"art_url": image_url}).eq("id", req.id).execute()
+
+    return {"success": True, "art_url": image_url}
 
 # ===================== RODAR =====================
 if __name__ == "__main__":
