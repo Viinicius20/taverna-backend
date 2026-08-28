@@ -1875,6 +1875,22 @@ async def aplicar_asi(request: Request, req: AsiRequest):
     supabase.table("characters").update({"data": ficha}).eq("id", req.character_id).execute()
     return {"success": True, "data": ficha}
 
+def montar_prompt_imagem_npc(descricao_pt):
+    prompt_tradutor = f"""
+    Traduza esta descrição de personagem de RPG para uma lista curta de elementos visuais em inglês, 
+    focando em aparência física concreta (roupa, postura, características visíveis).
+    Ignore diálogo, comportamento e lore que não seja visual.
+    Responda APENAS com a lista de elementos separados por vírgula, sem explicações.
+
+    Descrição: {descricao_pt}
+    """
+    try:
+        elementos_visuais = gerar_texto_com_gemini(prompt_tradutor)
+        return elementos_visuais.strip()
+    except Exception:
+        return descricao_pt
+
+
 @app.post("/gerar-arte")
 async def gerar_arte(req: GerarArteRequest):
 
@@ -1884,13 +1900,17 @@ async def gerar_arte(req: GerarArteRequest):
         if not npc:
             raise HTTPException(404, "NPC não encontrado")
 
+        d = npc.get("data", {}) or {}
+
         if req.descricao_customizada.strip():
-            prompt = f"fantasy character portrait, {req.descricao_customizada}, detailed digital painting, dnd art style"
+            elementos = montar_prompt_imagem_npc(req.descricao_customizada)
         else:
-            prompt = (
-                f"fantasy character portrait, {npc.get('race', '')} {npc.get('class', '')}, "
-                f"{npc.get('description', '')}, detailed digital painting, dnd art style"
-            )
+            partes = [d.get('race', ''), d.get('class', d.get('occupation', '')), d.get('appearance', ''),
+                      d.get('personality', '')]
+            descricao_completa = ', '.join(p for p in partes if p)
+            elementos = montar_prompt_imagem_npc(descricao_completa)
+
+        prompt = f"fantasy character portrait, {elementos}, detailed digital painting, dnd art style, upper body, detailed face"
         tabela = "npcs"
 
     elif req.tipo == "item":
@@ -1913,9 +1933,13 @@ async def gerar_arte(req: GerarArteRequest):
 
     prompt_encoded = urllib.parse.quote(prompt)
     seed = random.randint(1, 999999)
-    image_url = f"https://image.pollinations.ai/prompt/{prompt_encoded}?width=768&height=768&nologo=true&seed={seed}"
+    image_url = f"https://image.pollinations.ai/prompt/{prompt_encoded}?width=768&height=768&nologo=true&seed={seed}&model=flux"
 
-    supabase.table(tabela).update({"art_url": image_url}).eq("id", req.id).execute()
+    if req.tipo == "npc":
+        d["art_url"] = image_url
+        supabase.table(tabela).update({"data": d}).eq("id", req.id).execute()
+    else:
+        supabase.table(tabela).update({"art_url": image_url}).eq("id", req.id).execute()
 
     return {"success": True, "art_url": image_url}
 
@@ -1937,6 +1961,7 @@ async def deletar_arte(req: DeletarArteRequest):
         raise HTTPException(400, "Tipo inválido")
 
     return {"success": True}
+
 
 # ===================== RODAR =====================
 if __name__ == "__main__":
