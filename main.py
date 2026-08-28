@@ -7,6 +7,7 @@ import random
 import string
 import base64
 import tempfile
+import urllib.parse
 from google.genai.errors import ServerError
 from fastapi import FastAPI, HTTPException, UploadFile, File, Request, Body
 from fastapi.middleware.cors import CORSMiddleware
@@ -1872,7 +1873,6 @@ async def aplicar_asi(request: Request, req: AsiRequest):
 
 @app.post("/gerar-arte")
 async def gerar_arte(req: GerarArteRequest):
-    import urllib.parse
 
     if req.tipo == "npc":
         result = supabase.table("npcs").select("*").eq("id", req.id).single().execute()
