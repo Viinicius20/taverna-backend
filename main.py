@@ -149,6 +149,10 @@ class GerarArteRequest(BaseModel):
     id: str
     descricao_customizada: str = ""  # opcional, se o usuário quiser escrever a própria descrição
 
+class DeletarArteRequest(BaseModel):
+    tipo: str
+    id: str
+
 
 # ===================== FUNÇÃO AUXILIAR GEMINI =====================
 from google.genai.errors import ServerError
@@ -1913,6 +1917,25 @@ async def gerar_arte(req: GerarArteRequest):
     supabase.table(tabela).update({"art_url": image_url}).eq("id", req.id).execute()
 
     return {"success": True, "art_url": image_url}
+
+@app.post("/deletar-arte")
+async def deletar_arte(req: DeletarArteRequest):
+    if req.tipo == "npc":
+        result = supabase.table("npcs").select("*").eq("id", req.id).single().execute()
+        npc = result.data
+        if not npc:
+            raise HTTPException(404, "NPC não encontrado")
+        d = npc.get("data", {}) or {}
+        d.pop("art_url", None)
+        supabase.table("npcs").update({"data": d}).eq("id", req.id).execute()
+
+    elif req.tipo == "item":
+        supabase.table("magic_items").update({"art_url": None}).eq("id", req.id).execute()
+
+    else:
+        raise HTTPException(400, "Tipo inválido")
+
+    return {"success": True}
 
 # ===================== RODAR =====================
 if __name__ == "__main__":
