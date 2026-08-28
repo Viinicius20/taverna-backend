@@ -1912,7 +1912,8 @@ async def gerar_arte(req: GerarArteRequest):
         raise HTTPException(400, "Tipo inválido")
 
     prompt_encoded = urllib.parse.quote(prompt)
-    image_url = f"https://image.pollinations.ai/prompt/{prompt_encoded}?width=768&height=768&nologo=true"
+    seed = random.randint(1, 999999)
+    image_url = f"https://image.pollinations.ai/prompt/{prompt_encoded}?width=768&height=768&nologo=true&seed={seed}"
 
     supabase.table(tabela).update({"art_url": image_url}).eq("id", req.id).execute()
 
