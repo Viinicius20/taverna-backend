@@ -147,7 +147,7 @@ class AsiRequest(BaseModel):
 class GerarArteRequest(BaseModel):
     tipo: str  # "npc" | "item"
     id: str
-    descricao_customizada: str = ""  # opcional, se o usuário quiser escrever a própria descrição
+    descricao_customizada: str = ""
 
 class DeletarArteRequest(BaseModel):
     tipo: str
@@ -1877,10 +1877,16 @@ async def aplicar_asi(request: Request, req: AsiRequest):
 
 def montar_prompt_imagem_npc(descricao_pt):
     prompt_tradutor = f"""
-    Traduza esta descrição de personagem de RPG para uma lista curta de elementos visuais em inglês, 
-    focando em aparência física concreta (roupa, postura, características visíveis).
-    Ignore diálogo, comportamento e lore que não seja visual.
-    Responda APENAS com a lista de elementos separados por vírgula, sem explicações.
+    Você vai gerar uma descrição visual RICA e ESPECÍFICA para um gerador de imagens de IA.
+
+    Baseado na descrição de um NPC de RPG abaixo, crie uma lista de elementos visuais concretos em inglês.
+    Se a descrição for vaga ou incompleta, INVENTE detalhes plausíveis e específicos que combinem com o contexto 
+    (raça, classe, ocupação, personalidade) — nunca deixe genérico.
+
+    Inclua obrigatoriamente: tipo de roupa/armadura, cor de cabelo e olhos, expressão facial, 
+    postura corporal, e pelo menos um detalhe distintivo (cicatriz, joia, tatuagem, acessório).
+
+    Responda APENAS com a lista de elementos separados por vírgula, sem explicações, sem frases completas.
 
     Descrição: {descricao_pt}
     """
@@ -1893,10 +1899,13 @@ def montar_prompt_imagem_npc(descricao_pt):
 
 def montar_prompt_imagem_item(descricao_pt):
     prompt_tradutor = f"""
-    Traduza esta descrição de item mágico de RPG para uma lista curta de elementos visuais em inglês,
-    focando em aparência física concreta (material, forma, cor, brilho, efeitos visuais).
-    Ignore lore e mecânica de jogo que não seja visual.
-    Responda APENAS com a lista de elementos separados por vírgula, sem explicações.
+    Você vai gerar uma descrição visual RICA e ESPECÍFICA para um gerador de imagens de IA.
+
+    Baseado na descrição de um item mágico de RPG abaixo, crie uma lista de elementos visuais concretos em inglês.
+    Se a descrição for vaga ou incompleta, INVENTE detalhes plausíveis que combinem com o tipo e raridade do item
+    (material, cor, brilho, gravações, efeito mágico visível) — nunca deixe genérico.
+
+    Responda APENAS com a lista de elementos separados por vírgula, sem explicações, sem frases completas.
 
     Descrição: {descricao_pt}
     """
