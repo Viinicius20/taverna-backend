@@ -1891,6 +1891,22 @@ def montar_prompt_imagem_npc(descricao_pt):
         return descricao_pt
 
 
+def montar_prompt_imagem_item(descricao_pt):
+    prompt_tradutor = f"""
+    Traduza esta descrição de item mágico de RPG para uma lista curta de elementos visuais em inglês,
+    focando em aparência física concreta (material, forma, cor, brilho, efeitos visuais).
+    Ignore lore e mecânica de jogo que não seja visual.
+    Responda APENAS com a lista de elementos separados por vírgula, sem explicações.
+
+    Descrição: {descricao_pt}
+    """
+    try:
+        elementos_visuais = gerar_texto_com_gemini(prompt_tradutor)
+        return elementos_visuais.strip()
+    except Exception:
+        return descricao_pt
+
+
 @app.post("/gerar-arte")
 async def gerar_arte(req: GerarArteRequest):
 
@@ -1920,12 +1936,13 @@ async def gerar_arte(req: GerarArteRequest):
             raise HTTPException(404, "Item não encontrado")
 
         if req.descricao_customizada.strip():
-            prompt = f"fantasy magic item, {req.descricao_customizada}, detailed item icon, dnd art style, dark background"
+            elementos = montar_prompt_imagem_item(req.descricao_customizada)
         else:
-            prompt = (
-                f"fantasy magic item, {item.get('name', '')}, {item.get('rarity', '')}, "
-                f"{item.get('description', '')}, detailed item icon, dnd art style, dark background"
-            )
+            partes = [item.get('name', ''), item.get('rarity', ''), item.get('description', '')]
+            descricao_completa = ', '.join(p for p in partes if p)
+            elementos = montar_prompt_imagem_item(descricao_completa)
+
+        prompt = f"fantasy magic item icon, {elementos}, detailed illustration, isolated on dark background, glowing magic effect"
         tabela = "magic_items"
 
     else:
