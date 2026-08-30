@@ -2016,35 +2016,37 @@ async def deletar_arte(req: DeletarArteRequest):
 
 @app.post("/sessions/encerrar")
 async def encerrar_sessao(req: EncerrarSessaoRequest):
-    # Junta os dados relevantes desde a última sessão
-    itens_entregues = supabase.table("item_log").select("*").eq("campaign_id", req.campaign_id).execute().data
-    rumores = supabase.table("rumors").select("*").eq("campaign_id", req.campaign_id).execute().data
-    npcs_usados = supabase.table("npcs").select("name, data").eq("campaign_id", req.campaign_id).execute().data
+    ultimas = supabase.table("sessions").select("*").eq("campaign_id", req.campaign_id).order("session_number", desc=True).limit(1).execute()
+    ultimo_numero = ultimas.data[0]["session_number"] if ultimas.data else 0
+    data_corte = ultimas.data[0]["created_at"] if ultimas.data else "2000-01-01"
 
-    contexto_bruto = f"""
-    Itens entregues: {json.dumps(itens_entregues)}
-    Rumores da sessão: {json.dumps(rumores)}
-    NPCs presentes: {json.dumps([n['name'] for n in npcs_usados])}
-    """
+    eventos = supabase.table("session_events").select("*").eq("campaign_id", req.campaign_id).gt("created_at", data_corte).execute().data
+
+    if not eventos:
+        raise HTTPException(400, "Nenhum evento novo desde a última sessão")
+
+    eventos_texto = "\n".join([f"- {e['tipo']}: {e['descricao']}" for e in eventos])
 
     prompt = f"""
-    Você é um cronista de campanha de RPG. Baseado nos eventos brutos abaixo, 
-    escreva um resumo narrativo curto (3-5 frases) da sessão {req.session_number}, 
-    em tom de "recapitulação" — o que aconteceu, quem apareceu, o que mudou no mundo.
+    Você é um cronista de campanha de RPG. Baseado nos eventos abaixo, 
+    escreva um resumo narrativo curto (3-5 frases) da sessão, em tom de "recapitulação" 
+    — o que aconteceu, quem apareceu, o que mudou no mundo. Seja envolvente, não uma lista seca.
 
-    Eventos: {contexto_bruto}
+    Eventos:
+    {eventos_texto}
     """
 
     resumo = gerar_texto_com_gemini(prompt)
 
+    novo_numero = ultimo_numero + 1
     supabase.table("sessions").insert({
         "campaign_id": req.campaign_id,
-        "session_number": req.session_number,
-        "summary": resumo,
-        "raw_context": contexto_bruto
+        "session_number": novo_numero,
+        "title": req.title or f"Sessão {novo_numero}",
+        "summary": resumo
     }).execute()
 
-    return {"success": True, "summary": resumo}
+    return {"success": True, "summary": resumo, "session_number": novo_numero}
 
 
 # ===================== RODAR =====================
