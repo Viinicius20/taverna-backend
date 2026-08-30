@@ -155,7 +155,7 @@ class DeletarArteRequest(BaseModel):
 
 class EncerrarSessaoRequest(BaseModel):
     campaign_id: str
-    session_number: int
+    title: str = ""
 
 # ===================== FUNÇÃO AUXILIAR GEMINI =====================
 from google.genai.errors import ServerError
