@@ -153,6 +153,9 @@ class DeletarArteRequest(BaseModel):
     tipo: str
     id: str
 
+class EncerrarSessaoRequest(BaseModel):
+    campaign_id: str
+    session_number: int
 
 # ===================== FUNÇÃO AUXILIAR GEMINI =====================
 from google.genai.errors import ServerError
@@ -164,6 +167,8 @@ GEMINI_KEYS = [
     os.getenv("GEMINI_API_KEY_2"),
     os.getenv("GEMINI_API_KEY_4"),
 ]
+
+CAMPANHA_ID = "00000000-0000-0000-0000-000000000001"
 
 def gerar_json_com_gemini(prompt: str, max_retries=3) -> dict:
     last_error = None
@@ -929,13 +934,22 @@ async def gerar_boato():
     prompt = f"Você é um frequentador de taverna em um mundo de fantasia medieval. Gere um boato curto que estaria circulando na taverna. Este boato é {tipo}. Retorne APENAS um JSON: {{\"boato\": \"frase curta\", \"fonte\": \"quem espalha\", \"falso\": {str(falso).lower()}}}"
 
     try:
-        response = client.models.generate_content(
-            model='gemini-2.5-flash',
-            contents=[{"role": "user", "parts": [{"text": prompt}]}]
-        )
-        print(f"BOATO RAW: '{response.text}'")
-        raw = response.text.strip().replace("```json", "").replace("```", "").strip()
-        return {"success": True, "data": json.loads(raw)}
+        raw = gerar_texto_com_gemini(prompt)
+        print(f"BOATO RAW: '{raw}'")
+        raw = raw.strip().replace("```json", "").replace("```", "").strip()
+        boato_data = json.loads(raw)
+
+        # Registra o evento pra memória da sessão — falha aqui não pode quebrar o boato
+        try:
+            supabase.table("session_events").insert({
+                "campaign_id": CAMPANHA_ID,
+                "tipo": "rumor",
+                "descricao": f"Boato circulando: \"{boato_data.get('boato', '')}\" (fonte: {boato_data.get('fonte', 'desconhecida')})"
+            }).execute()
+        except Exception as log_error:
+            print(f"[AVISO] Falha ao registrar evento de sessão: {log_error}")
+
+        return {"success": True, "data": boato_data}
     except Exception as e:
         print(f"ERRO BOATO: {e}")
         raise HTTPException(500, f"Erro ao gerar boato: {str(e)}")
@@ -1682,9 +1696,9 @@ async def notificar_item(data: dict = Body(...)):
         character_id = data.get("character_id")
         item_nome = data.get("item_nome")
 
-        # Busca o user_id do personagem destinatário
+        # Busca user_id e campaign_id do personagem destinatário
         char_res = supabase.table("characters") \
-            .select("user_id") \
+            .select("user_id, campaign_id, name") \
             .eq("id", character_id) \
             .single() \
             .execute()
@@ -1695,6 +1709,18 @@ async def notificar_item(data: dict = Body(...)):
                 "📦 Item Recebido",
                 f"Você recebeu: {item_nome}"
             )
+
+        # Registra o evento pra memória da sessão — falha aqui não pode quebrar a notificação
+        if char_res.data and char_res.data.get("campaign_id"):
+            try:
+                nome_personagem = char_res.data.get("name", "um personagem")
+                supabase.table("session_events").insert({
+                    "campaign_id": char_res.data["campaign_id"],
+                    "tipo": "item_entregue",
+                    "descricao": f"{item_nome} foi entregue a {nome_personagem}"
+                }).execute()
+            except Exception as log_error:
+                print(f"[AVISO] Falha ao registrar evento de sessão: {log_error}")
 
         return {"success": True}
     except Exception as e:
@@ -1987,6 +2013,38 @@ async def deletar_arte(req: DeletarArteRequest):
         raise HTTPException(400, "Tipo inválido")
 
     return {"success": True}
+
+@app.post("/sessoes/encerrar")
+async def encerrar_sessao(req: EncerrarSessaoRequest):
+    # Junta os dados relevantes desde a última sessão
+    itens_entregues = supabase.table("item_log").select("*").eq("campaign_id", req.campaign_id).execute().data
+    rumores = supabase.table("rumors").select("*").eq("campaign_id", req.campaign_id).execute().data
+    npcs_usados = supabase.table("npcs").select("name, data").eq("campaign_id", req.campaign_id).execute().data
+
+    contexto_bruto = f"""
+    Itens entregues: {json.dumps(itens_entregues)}
+    Rumores da sessão: {json.dumps(rumores)}
+    NPCs presentes: {json.dumps([n['name'] for n in npcs_usados])}
+    """
+
+    prompt = f"""
+    Você é um cronista de campanha de RPG. Baseado nos eventos brutos abaixo, 
+    escreva um resumo narrativo curto (3-5 frases) da sessão {req.session_number}, 
+    em tom de "recapitulação" — o que aconteceu, quem apareceu, o que mudou no mundo.
+
+    Eventos: {contexto_bruto}
+    """
+
+    resumo = gerar_texto_com_gemini(prompt)
+
+    supabase.table("sessions").insert({
+        "campaign_id": req.campaign_id,
+        "session_number": req.session_number,
+        "summary": resumo,
+        "raw_context": contexto_bruto
+    }).execute()
+
+    return {"success": True, "summary": resumo}
 
 
 # ===================== RODAR =====================
