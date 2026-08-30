@@ -2032,11 +2032,21 @@ async def encerrar_sessao(req: EncerrarSessaoRequest):
     escreva um resumo narrativo curto (3-5 frases) da sessão, em tom de "recapitulação" 
     — o que aconteceu, quem apareceu, o que mudou no mundo. Seja envolvente, não uma lista seca.
 
+    IMPORTANTE: responda APENAS com o texto corrido do resumo, sem JSON, sem aspas, sem markdown, sem prefixos.
+
     Eventos:
     {eventos_texto}
     """
 
     resumo = gerar_texto_com_gemini(prompt)
+    resumo = resumo.strip()
+
+    if resumo.startswith("{"):
+        try:
+            resumo_json = json.loads(resumo)
+            resumo = resumo_json.get("recap") or resumo_json.get("summary") or list(resumo_json.values())[0]
+        except Exception:
+            pass
 
     novo_numero = ultimo_numero + 1
     supabase.table("sessions").insert({
