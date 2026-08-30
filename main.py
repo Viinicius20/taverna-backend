@@ -2014,7 +2014,7 @@ async def deletar_arte(req: DeletarArteRequest):
 
     return {"success": True}
 
-@app.post("/sessoes/encerrar")
+@app.post("/sessions/encerrar")
 async def encerrar_sessao(req: EncerrarSessaoRequest):
     # Junta os dados relevantes desde a última sessão
     itens_entregues = supabase.table("item_log").select("*").eq("campaign_id", req.campaign_id).execute().data
