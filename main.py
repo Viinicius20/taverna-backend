@@ -524,7 +524,10 @@ async def level_up(request: Request, req: LevelUpRequest):
         ficha_nova = gerar_json_com_gemini(prompt)
 
         # Preservar campos que a IA pode ignorar
-        campos_preservar = ["background", "alignment", "background_story", "inventory", "xp", "classes", "name", "race"]
+        campos_preservar = [
+    "background", "alignment", "background_story", "inventory", "xp", "classes", "name", "race",
+    "ideais", "vinculos", "defeitos", "objetivo_atual", "medos", "languages"
+]
         for campo in campos_preservar:
             if campo in ficha and (campo not in ficha_nova or not ficha_nova[campo]):
                 ficha_nova[campo] = ficha[campo]
