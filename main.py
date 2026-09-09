@@ -504,8 +504,9 @@ async def level_up(request: Request, req: LevelUpRequest):
     - combat.saving_throws: recalcule com o novo bônus de proficiência
     - features: adicione TODAS as novas features/habilidades do nível {req.nivel_alvo}, no formato: 
     [{{"nome": "Nome da Feature", "origem": "classe"}}, ...]. 
-    Use "origem": "racial" para features de raça, "antecedente" para features de background, "classe" para o resto.
-    Preserve as features já existentes no mesmo formato.
+    Use "origem": "racial" para features de raça (incluindo traços de subrraças e linhagens como Tabaxi, Tiefling, Dragonborn, etc — 
+    ex: Darkvision, Feline Agility, Cat's Claws, Breath Weapon, Fire Resistance, Flight, Innate Spellcasting, Natural Armor, Powerful Build), 
+    "antecedente" para features de background, "classe" para o resto.
     - Se houver Ability Score Improvement neste nível, aplique nos atributos
 
     Campos que DEVEM ser preservados exatamente como estão:
