@@ -502,7 +502,10 @@ async def level_up(request: Request, req: LevelUpRequest):
     - combat.hp: igual ao hp_max novo (full heal no level up)
     - combat.proficiency (ou proficiency_bonus): recalcule pela tabela padrão de D&D 5e
     - combat.saving_throws: recalcule com o novo bônus de proficiência
-    - features: adicione TODAS as novas features/habilidades do nível {req.nivel_alvo}
+    - features: adicione TODAS as novas features/habilidades do nível {req.nivel_alvo}, no formato: 
+    [{{"nome": "Nome da Feature", "origem": "classe"}}, ...]. 
+    Use "origem": "racial" para features de raça, "antecedente" para features de background, "classe" para o resto.
+    Preserve as features já existentes no mesmo formato.
     - Se houver Ability Score Improvement neste nível, aplique nos atributos
 
     Campos que DEVEM ser preservados exatamente como estão:
