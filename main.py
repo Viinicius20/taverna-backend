@@ -2065,6 +2065,71 @@ async def encerrar_sessao(req: EncerrarSessaoRequest):
 
     return {"success": True, "summary": resumo, "session_number": novo_numero}
 
+class FactionRequest(BaseModel):
+    campaign_id: str
+    description: str
+    system: str = "D&D 5e"
+
+@app.post("/factions/generate")
+async def gerar_faccao(req: FactionRequest):
+    prompt = f"""
+    Você é um mestre de RPG criando uma facção para o mundo de campanha.
+    Sistema: {req.system}
+    Descrição fornecida pelo mestre: {req.description}
+
+    Retorne APENAS um JSON:
+    {{
+      "name": "Nome da Facção",
+      "type": "guilda/ordem/reino/culto/outro",
+      "description": "Descrição curta da facção, seus valores e estrutura",
+      "goals": "Objetivos atuais da facção no mundo"
+    }}
+    """
+    try:
+        raw = gerar_texto_com_gemini(prompt)
+        raw = raw.replace("```json", "").replace("```", "").strip()
+        faction_data = json.loads(raw)
+
+        result = supabase.table("factions").insert({
+            "campaign_id": req.campaign_id,
+            "name": faction_data.get("name"),
+            "type": faction_data.get("type"),
+            "description": faction_data.get("description"),
+            "goals": faction_data.get("goals"),
+            "reputation": "neutra",
+            "is_homebrew": True
+        }).execute()
+
+        return {"success": True, "data": result.data[0] if result.data else None}
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao gerar facção: {str(e)}")
+
+
+@app.get("/factions/{campaign_id}")
+async def listar_faccoes(campaign_id: str):
+    result = supabase.table("factions").select("*").eq("campaign_id", campaign_id).order("name").execute()
+    return {"success": True, "data": result.data}
+
+
+class UpdateFactionRequest(BaseModel):
+    name: str = None
+    type: str = None
+    description: str = None
+    goals: str = None
+    reputation: str = None
+
+@app.patch("/factions/{faction_id}")
+async def atualizar_faccao(faction_id: str, req: UpdateFactionRequest):
+    updates = {k: v for k, v in req.dict().items() if v is not None}
+    supabase.table("factions").update(updates).eq("id", faction_id).execute()
+    return {"success": True}
+
+
+@app.delete("/factions/{faction_id}")
+async def deletar_faccao(faction_id: str):
+    supabase.table("factions").delete().eq("id", faction_id).execute()
+    return {"success": True}
+
 
 # ===================== RODAR =====================
 if __name__ == "__main__":
