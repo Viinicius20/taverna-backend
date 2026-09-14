@@ -2265,6 +2265,50 @@ async def remover_memoria_npc(req: RemoverMemoriaRequest):
     supabase.table("npcs").update({"data": d}).eq("id", req.npc_id).execute()
     return {"success": True, "data": memoria}
 
+class ConhecimentoRequest(BaseModel):
+    character_id: str
+    topico: str
+    system: str = "D&D 5e"
+
+@app.post("/personagem/conhecimento")
+async def verificar_conhecimento(req: ConhecimentoRequest):
+    result = supabase.table("characters").select("*").eq("id", req.character_id).single().execute()
+    char = result.data
+    if not char:
+        raise HTTPException(404, "Personagem não encontrado")
+
+    d = char.get("data", {}) or {}
+    attrs = d.get("attributes", d.get("atributos", {}))
+    skills = d.get("skills", {})
+    classes = d.get("classes", [{"name": d.get("class")}])
+    background = d.get("background", "")
+
+    prompt = f"""
+    Você é um mestre de RPG decidindo o que um personagem sabe sobre um tópico.
+    Sistema: {req.system}
+
+    Personagem: {d.get('name', char.get('name'))}
+    Classe(s): {json.dumps(classes)}
+    Antecedente: {background}
+    Inteligência: {attrs.get('int', 10)}
+    Perícias relevantes (Arcana, História, Religião, Natureza, Investigação): {json.dumps({k: v for k, v in skills.items() if k in ['arcana', 'history', 'religion', 'nature', 'investigation']})}
+
+    Tópico perguntado: {req.topico}
+
+    Baseado nos atributos, perícias e antecedente acima, determine se esse personagem 
+    específico saberia algo sobre esse tópico. Seja realista: um personagem com baixa 
+    Inteligência e sem perícias relevantes provavelmente sabe pouco ou nada, mesmo que 
+    a informação seja "conhecida" geralmente.
+
+    Responda em 2-3 frases, do ponto de vista do que o personagem lembra ou pensa, 
+    ou explique brevemente por que ele não saberia nada sobre isso.
+    """
+    try:
+        resposta = gerar_texto_com_gemini(prompt)
+        return {"success": True, "data": resposta.strip()}
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao verificar conhecimento: {str(e)}")
+
 # ===================== RODAR =====================
 if __name__ == "__main__":
     import uvicorn
