@@ -2155,6 +2155,37 @@ async def gerar_descricao_contextual(req: DescricaoContextualRequest):
     except Exception as e:
         raise HTTPException(500, f"Erro ao gerar descrição: {str(e)}")
 
+class ConsequenciaRequest(BaseModel):
+    situacao: str
+    system: str = "D&D 5e"
+
+@app.post("/gerar-consequencia")
+async def gerar_consequencia(req: ConsequenciaRequest):
+    prompt = f"""
+    Você é um mestre de RPG experiente ajudando outro mestre a improvisar.
+    Sistema: {req.system}
+
+    Os jogadores tomaram a seguinte ação/decisão: {req.situacao}
+
+    Sugira 3 possíveis consequências ou desdobramentos plausíveis para essa ação,
+    variando entre um resultado favorável, um neutro/complicado, e um desfavorável.
+    Seja específico e prático, algo que o mestre possa usar imediatamente na mesa.
+
+    Retorne APENAS um JSON:
+    {{
+      "favoravel": "descrição da consequência favorável",
+      "neutro": "descrição da consequência neutra/complicada",
+      "desfavoravel": "descrição da consequência desfavorável"
+    }}
+    """
+    try:
+        raw = gerar_texto_com_gemini(prompt)
+        raw = raw.replace("```json", "").replace("```", "").strip()
+        consequencias = json.loads(raw)
+        return {"success": True, "data": consequencias}
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao gerar consequência: {str(e)}")
+
 
 # ===================== RODAR =====================
 if __name__ == "__main__":
