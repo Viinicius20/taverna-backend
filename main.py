@@ -23,6 +23,7 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from fastapi import FastAPI, HTTPException, UploadFile, File, Request, Body, Form
 from pywebpush import webpush, WebPushException
+from datetime import datetime
 
 load_dotenv()
 
@@ -2186,6 +2187,63 @@ async def gerar_consequencia(req: ConsequenciaRequest):
     except Exception as e:
         raise HTTPException(500, f"Erro ao gerar consequência: {str(e)}")
 
+
+class MemoriaNpcRequest(BaseModel):
+    npc_id: str
+    evento: str
+
+@app.post("/npcs/memoria")
+async def adicionar_memoria_npc(req: MemoriaNpcRequest):
+    result = supabase.table("npcs").select("*").eq("id", req.npc_id).single().execute()
+    npc = result.data
+    if not npc:
+        raise HTTPException(404, "NPC não encontrado")
+
+    d = npc.get("data", {}) or {}
+    memoria = d.get("memoria", [])
+    memoria.append({"evento": req.evento, "data": datetime.now().isoformat()})
+    d["memoria"] = memoria[-20:]  # mantém só os últimos 20 eventos
+
+    supabase.table("npcs").update({"data": d}).eq("id", req.npc_id).execute()
+    return {"success": True, "data": d["memoria"]}
+
+
+class SugestaoNpcRequest(BaseModel):
+    npc_id: str
+    situacao_atual: str = ""
+
+@app.post("/npcs/sugerir-acao")
+async def sugerir_acao_npc(req: SugestaoNpcRequest):
+    result = supabase.table("npcs").select("*").eq("id", req.npc_id).single().execute()
+    npc = result.data
+    if not npc:
+        raise HTTPException(404, "NPC não encontrado")
+
+    d = npc.get("data", {}) or {}
+    memoria = d.get("memoria", [])
+    memoria_texto = "\n".join([f"- {m['evento']}" for m in memoria]) or "Nenhum evento registrado ainda."
+
+    prompt = f"""
+    Você é um mestre de RPG interpretando um NPC.
+
+    Nome: {d.get('name', npc.get('name'))}
+    Personalidade: {d.get('personality', 'não definida')}
+    Motivação: {d.get('motivation', 'não definida')}
+
+    Histórico de interações com os jogadores:
+    {memoria_texto}
+
+    Situação atual: {req.situacao_atual or "Os jogadores acabam de encontrar este NPC novamente."}
+
+    Baseado na personalidade e no histórico acima, sugira como esse NPC reagiria 
+    agora — o que ele diria ou faria. Seja específico e consistente com o que já aconteceu.
+    Responda em 2-4 frases, em tom narrativo, pronto para o mestre usar na mesa.
+    """
+    try:
+        sugestao = gerar_texto_com_gemini(prompt)
+        return {"success": True, "data": sugestao.strip()}
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao gerar sugestão: {str(e)}")
 
 # ===================== RODAR =====================
 if __name__ == "__main__":
