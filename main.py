@@ -2300,12 +2300,24 @@ async def verificar_conhecimento(req: ConhecimentoRequest):
     Inteligência e sem perícias relevantes provavelmente sabe pouco ou nada, mesmo que 
     a informação seja "conhecida" geralmente.
 
+    IMPORTANTE: responda APENAS com o texto corrido, sem JSON, sem aspas, sem markdown, sem prefixos.
+
     Responda em 2-3 frases, do ponto de vista do que o personagem lembra ou pensa, 
     ou explique brevemente por que ele não saberia nada sobre isso.
     """
     try:
         resposta = gerar_texto_com_gemini(prompt)
-        return {"success": True, "data": resposta.strip()}
+        resposta = resposta.strip()
+
+        if resposta.startswith("{"):
+            try:
+                resposta_json = json.loads(resposta)
+                resposta = resposta_json.get("knowledge") or resposta_json.get("resposta") or \
+                           list(resposta_json.values())[0]
+            except Exception:
+                pass
+
+        return {"success": True, "data": resposta}
     except Exception as e:
         raise HTTPException(500, f"Erro ao verificar conhecimento: {str(e)}")
 
