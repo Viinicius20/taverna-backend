@@ -2245,6 +2245,26 @@ async def sugerir_acao_npc(req: SugestaoNpcRequest):
     except Exception as e:
         raise HTTPException(500, f"Erro ao gerar sugestão: {str(e)}")
 
+class RemoverMemoriaRequest(BaseModel):
+    npc_id: str
+    index: int
+
+@app.post("/npcs/memoria/remover")
+async def remover_memoria_npc(req: RemoverMemoriaRequest):
+    result = supabase.table("npcs").select("*").eq("id", req.npc_id).single().execute()
+    npc = result.data
+    if not npc:
+        raise HTTPException(404, "NPC não encontrado")
+
+    d = npc.get("data", {}) or {}
+    memoria = d.get("memoria", [])
+    if 0 <= req.index < len(memoria):
+        memoria.pop(req.index)
+    d["memoria"] = memoria
+
+    supabase.table("npcs").update({"data": d}).eq("id", req.npc_id).execute()
+    return {"success": True, "data": memoria}
+
 # ===================== RODAR =====================
 if __name__ == "__main__":
     import uvicorn
