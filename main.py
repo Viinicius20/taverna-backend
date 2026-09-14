@@ -2130,6 +2130,31 @@ async def deletar_faccao(faction_id: str):
     supabase.table("factions").delete().eq("id", faction_id).execute()
     return {"success": True}
 
+class DescricaoContextualRequest(BaseModel):
+    contexto: str
+    system: str = "D&D 5e"
+
+@app.post("/gerar-descricao-contextual")
+async def gerar_descricao_contextual(req: DescricaoContextualRequest):
+    prompt = f"""
+    Você é um mestre de RPG narrando uma cena para os jogadores.
+    Sistema: {req.system}
+
+    Baseado no contexto abaixo, escreva uma descrição imersiva e evocativa 
+    (2-4 frases) pronta para ser lida em voz alta na mesa. Foque em detalhes 
+    sensoriais (visão, som, cheiro, atmosfera) que ajudem os jogadores a 
+    visualizar a cena.
+
+    Contexto: {req.contexto}
+
+    Responda APENAS com a descrição narrativa, sem título, sem explicações.
+    """
+    try:
+        descricao = gerar_texto_com_gemini(prompt)
+        return {"success": True, "data": descricao.strip()}
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao gerar descrição: {str(e)}")
+
 
 # ===================== RODAR =====================
 if __name__ == "__main__":
