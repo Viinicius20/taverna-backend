@@ -2321,6 +2321,79 @@ async def verificar_conhecimento(req: ConhecimentoRequest):
     except Exception as e:
         raise HTTPException(500, f"Erro ao verificar conhecimento: {str(e)}")
 
+class LocationRequest(BaseModel):
+    campaign_id: str
+    description: str
+    system: str = "D&D 5e"
+
+@app.post("/locations/generate")
+async def gerar_local(req: LocationRequest):
+    prompt = f"""
+    Você é um mestre de RPG criando um local para o mundo de campanha.
+    Sistema: {req.system}
+    Descrição fornecida: {req.description}
+
+    Retorne APENAS um JSON:
+    {{
+      "name": "Nome do Local",
+      "type": "cidade/vila/masmorra/floresta/ruína/outro",
+      "description": "Descrição geral do local, atmosfera e aparência",
+      "region_info": "Clima, geografia e cultura da região",
+      "commerce": "O que é comum encontrar à venda ou negociar aqui",
+      "monsters": "Criaturas ou perigos comuns na região",
+      "quests": "2-3 ideias de missão ou situação que fazem sentido aqui",
+      "language": "Idioma mais falado no local",
+      "avg_level": "Faixa de nível recomendada para aventureiros (ex: 3-5)",
+      "boss": "Uma possível ameaça principal ou chefe local, se fizer sentido (ou vazio se não)"
+    }}
+    """
+    try:
+        raw = gerar_texto_com_gemini(prompt)
+        raw = raw.replace("```json", "").replace("```", "").strip()
+        loc_data = json.loads(raw)
+
+        result = supabase.table("locations").insert({
+            "campaign_id": req.campaign_id,
+            "name": loc_data.get("name"),
+            "type": loc_data.get("type"),
+            "description": loc_data.get("description"),
+            "region_info": loc_data.get("region_info"),
+            "commerce": loc_data.get("commerce"),
+            "monsters": loc_data.get("monsters"),
+            "quests": loc_data.get("quests"),
+            "language": loc_data.get("language"),
+            "avg_level": loc_data.get("avg_level"),
+            "boss": loc_data.get("boss"),
+            "is_homebrew": True
+        }).execute()
+
+        return {"success": True, "data": result.data[0] if result.data else None}
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao gerar local: {str(e)}")
+
+
+@app.get("/locations/{campaign_id}")
+async def listar_locais(campaign_id: str):
+    result = supabase.table("locations").select("*").eq("campaign_id", campaign_id).order("name").execute()
+    return {"success": True, "data": result.data}
+
+
+class UpdateLocationRequest(BaseModel):
+    faction_id: str = None
+    name: str = None
+
+@app.patch("/locations/{location_id}")
+async def atualizar_local(location_id: str, req: UpdateLocationRequest):
+    updates = {k: v for k, v in req.dict().items() if v is not None}
+    supabase.table("locations").update(updates).eq("id", location_id).execute()
+    return {"success": True}
+
+
+@app.delete("/locations/{location_id}")
+async def deletar_local(location_id: str):
+    supabase.table("locations").delete().eq("id", location_id).execute()
+    return {"success": True}
+
 # ===================== RODAR =====================
 if __name__ == "__main__":
     import uvicorn
