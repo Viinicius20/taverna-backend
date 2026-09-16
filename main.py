@@ -2394,6 +2394,38 @@ async def deletar_local(location_id: str):
     supabase.table("locations").delete().eq("id", location_id).execute()
     return {"success": True}
 
+class HandoutRequest(BaseModel):
+    campaign_id: str
+    descricao: str
+    tipo_documento: str = "carta"  # carta, bilhete, pergaminho, mapa de tesouro, etc
+
+@app.post("/gallery/gerar-handout")
+async def gerar_handout(req: HandoutRequest):
+    prompt = f"""
+    Você é um mestre de RPG criando um documento/handout para os jogadores encontrarem.
+    Tipo: {req.tipo_documento}
+    Contexto: {req.descricao}
+
+    Escreva o conteúdo completo do documento como ele apareceria fisicamente 
+    (texto da carta, bilhete, pergaminho, etc), em tom apropriado ao contexto.
+    Responda APENAS com o texto do documento, sem explicações externas.
+    """
+    try:
+        conteudo = gerar_texto_com_gemini(prompt)
+        conteudo = conteudo.strip()
+
+        result = supabase.table("gallery").insert({
+            "campaign_id": req.campaign_id,
+            "type": "handout",
+            "category": req.tipo_documento,
+            "text_content": conteudo,
+            "revealed": False
+        }).execute()
+
+        return {"success": True, "data": result.data[0] if result.data else None}
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao gerar handout: {str(e)}")
+
 # ===================== RODAR =====================
 if __name__ == "__main__":
     import uvicorn
