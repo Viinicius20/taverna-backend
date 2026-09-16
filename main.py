@@ -2424,6 +2424,8 @@ async def gerar_handout(req: HandoutRequest):
 
         return {"success": True, "data": result.data[0] if result.data else None}
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(500, f"Erro ao gerar handout: {str(e)}")
 
 # ===================== RODAR =====================
