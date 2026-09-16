@@ -1521,20 +1521,19 @@ async def hide_image(image_id: str):
 @app.delete("/gallery/{image_id}")
 async def delete_gallery_image(image_id: str):
     try:
-        # Busca a imagem pra pegar o filename
         res = supabase.table("gallery").select("*").eq("id", image_id).single().execute()
         image = res.data
 
-        # Extrai filename da URL
-        filename = image["url"].split("/")[-1]
+        # Só tenta deletar do storage se realmente tiver uma URL de imagem
+        if image and image.get("url"):
+            filename = image["url"].split("/")[-1]
+            supabase.storage.from_("gallery").remove([filename])
 
-        # Deleta do storage
-        supabase.storage.from_("gallery").remove([filename])
-
-        # Deleta da tabela
         supabase.table("gallery").delete().eq("id", image_id).execute()
         return {"success": True}
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(500, f"Erro ao deletar imagem: {str(e)}")
 
 @app.get("/map-tokens/{campaign_id}")
