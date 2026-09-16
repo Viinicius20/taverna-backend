@@ -2416,6 +2416,7 @@ async def gerar_handout(req: HandoutRequest):
 
         result = supabase.table("gallery").insert({
             "campaign_id": req.campaign_id,
+            "name": f"{req.tipo_documento.capitalize()} - {req.descricao[:40]}",
             "type": "handout",
             "category": req.tipo_documento,
             "text_content": conteudo,
