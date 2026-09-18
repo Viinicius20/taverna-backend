@@ -2428,6 +2428,54 @@ async def gerar_handout(req: HandoutRequest):
         traceback.print_exc()
         raise HTTPException(500, f"Erro ao gerar handout: {str(e)}")
 
+class WorldEventRequest(BaseModel):
+    campaign_id: str
+    name: str
+    description: str = ""
+    deadline: str = ""
+    consequences: str = ""
+
+@app.post("/world-events")
+async def criar_evento_mundo(req: WorldEventRequest):
+    result = supabase.table("world_events").insert({
+        "campaign_id": req.campaign_id,
+        "name": req.name,
+        "description": req.description,
+        "deadline": req.deadline,
+        "consequences": req.consequences,
+        "progress": 0,
+        "status": "ativo"
+    }).execute()
+    return {"success": True, "data": result.data[0] if result.data else None}
+
+
+@app.get("/world-events/{campaign_id}")
+async def listar_eventos_mundo(campaign_id: str):
+    result = supabase.table("world_events").select("*").eq("campaign_id", campaign_id).order("created_at").execute()
+    return {"success": True, "data": result.data}
+
+
+class UpdateWorldEventRequest(BaseModel):
+    progress: int = None
+    status: str = None
+    locked_by_master: bool = None
+    name: str = None
+    description: str = None
+    deadline: str = None
+    consequences: str = None
+
+@app.patch("/world-events/{event_id}")
+async def atualizar_evento_mundo(event_id: str, req: UpdateWorldEventRequest):
+    updates = {k: v for k, v in req.dict().items() if v is not None}
+    supabase.table("world_events").update(updates).eq("id", event_id).execute()
+    return {"success": True}
+
+
+@app.delete("/world-events/{event_id}")
+async def deletar_evento_mundo(event_id: str):
+    supabase.table("world_events").delete().eq("id", event_id).execute()
+    return {"success": True}
+
 # ===================== RODAR =====================
 if __name__ == "__main__":
     import uvicorn
