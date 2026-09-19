@@ -1839,7 +1839,7 @@ Foque na aparência, presença e o que os aventureiros sentem ao se deparar com 
 Não mencione stats ou números. Escreva em português.
 Responda APENAS com a descrição, sem título ou introdução."""
 
-        descricao = gerar_texto_com_gemini(prompt)
+        descricao = await gerar_texto_com_gemini(prompt)
 
         return {
             "success": True,
@@ -2434,6 +2434,8 @@ class WorldEventRequest(BaseModel):
     description: str = ""
     deadline: str = ""
     consequences: str = ""
+    next_event_name: str = ""
+    next_event_description: str = ""
 
 @app.post("/world-events")
 async def criar_evento_mundo(req: WorldEventRequest):
@@ -2443,6 +2445,8 @@ async def criar_evento_mundo(req: WorldEventRequest):
         "description": req.description,
         "deadline": req.deadline,
         "consequences": req.consequences,
+        "next_event_name": req.next_event_name,
+        "next_event_description": req.next_event_description,
         "progress": 0,
         "status": "ativo"
     }).execute()
@@ -2520,39 +2524,29 @@ async def toggle_descoberto(id: str, data: dict = Body(...)):
     except Exception as e:
         raise HTTPException(500, f"Erro ao atualizar bestiário: {str(e)}")
 
-class EnviarPresagioRequest(BaseModel):
-    character_id: Optional[str] = None
 
-@app.post("/presagios/{presagio_id}/enviar")
-async def enviar_presagio(presagio_id: str, req: EnviarPresagioRequest):
-    presagio_res = supabase.table("presagios").select("*").eq("id", presagio_id).single().execute()
-    presagio = presagio_res.data
-    if not presagio:
-        raise HTTPException(404, "Presságio não encontrado")
+@app.patch("/world-events/{event_id}")
+async def atualizar_evento_mundo(event_id: str, req: UpdateWorldEventRequest):
+    updates = {k: v for k, v in req.dict().items() if v is not None}
 
-    texto_misterioso = f"🔮 {presagio['texto']}"
+    result = supabase.table("world_events").update(updates).eq("id", event_id).execute()
+    evento_atualizado = result.data[0] if result.data else None
 
-    if req.character_id:
-        destinatarios = [req.character_id]
-    else:
-        chars_res = supabase.table("characters").select("id").eq("campaign_id", presagio["campaign_id"]).execute()
-        destinatarios = [c["id"] for c in chars_res.data]
-
-    for char_id in destinatarios:
-        supabase.table("secret_messages").insert({
-            "campaign_id": presagio["campaign_id"],
-            "character_id": char_id,
-            "message": texto_misterioso,
-            "lida": False
+    # Se chegou a 100% e tem um próximo evento configurado, dispara a cadeia
+    if evento_atualizado and evento_atualizado.get("progress", 0) >= 100 and evento_atualizado.get(
+            "next_event_name") and not evento_atualizado.get("triggered_event_id"):
+        novo_evento = supabase.table("world_events").insert({
+            "campaign_id": evento_atualizado["campaign_id"],
+            "name": evento_atualizado["next_event_name"],
+            "description": evento_atualizado.get("next_event_description", ""),
+            "progress": 0,
+            "status": "ativo"
         }).execute()
 
-        char_res = supabase.table("characters").select("user_id").eq("id", char_id).single().execute()
-        if char_res.data and char_res.data.get("user_id"):
-            await enviar_push_notification(
-                char_res.data["user_id"],
-                "🔮 Presságio",
-                texto_misterioso
-            )
+        if novo_evento.data:
+            supabase.table("world_events").update({
+                "triggered_event_id": novo_evento.data[0]["id"]
+            }).eq("id", event_id).execute()
 
     return {"success": True}
 
