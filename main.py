@@ -2522,7 +2522,7 @@ async def toggle_descoberto(id: str, data: dict = Body(...)):
 
 class EnviarPresagioRequest(BaseModel):
     presagio_id: str
-    character_id: str = None  # se None, envia pra todos
+    character_id: Optional[str] = None
 
 @app.post("/presagios/{presagio_id}/enviar")
 async def enviar_presagio(presagio_id: str, req: EnviarPresagioRequest):
