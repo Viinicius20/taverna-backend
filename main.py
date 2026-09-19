@@ -1839,7 +1839,7 @@ Foque na aparência, presença e o que os aventureiros sentem ao se deparar com 
 Não mencione stats ou números. Escreva em português.
 Responda APENAS com a descrição, sem título ou introdução."""
 
-        descricao = await gerar_texto_com_gemini(prompt)
+        descricao = gerar_texto_com_gemini(prompt)
 
         return {
             "success": True,
@@ -2512,7 +2512,6 @@ async def deletar_presagio(id: str):
     except Exception as e:
         raise HTTPException(500, f"Erro ao deletar presságio: {str(e)}")
 
-# BESTIÁRIO — toggle descoberto
 @app.patch("/bestiary/{id}/descoberto")
 async def toggle_descoberto(id: str, data: dict = Body(...)):
     try:
@@ -2520,6 +2519,43 @@ async def toggle_descoberto(id: str, data: dict = Body(...)):
         return {"success": True, "data": res.data[0]}
     except Exception as e:
         raise HTTPException(500, f"Erro ao atualizar bestiário: {str(e)}")
+
+class EnviarPresagioRequest(BaseModel):
+    presagio_id: str
+    character_id: str = None  # se None, envia pra todos
+
+@app.post("/presagios/{presagio_id}/enviar")
+async def enviar_presagio(presagio_id: str, req: EnviarPresagioRequest):
+    presagio_res = supabase.table("presagios").select("*").eq("id", presagio_id).single().execute()
+    presagio = presagio_res.data
+    if not presagio:
+        raise HTTPException(404, "Presságio não encontrado")
+
+    texto_misterioso = f"🔮 {presagio['texto']}"
+
+    if req.character_id:
+        destinatarios = [req.character_id]
+    else:
+        chars_res = supabase.table("characters").select("id").eq("campaign_id", presagio["campaign_id"]).execute()
+        destinatarios = [c["id"] for c in chars_res.data]
+
+    for char_id in destinatarios:
+        supabase.table("secret_messages").insert({
+            "campaign_id": presagio["campaign_id"],
+            "character_id": char_id,
+            "message": texto_misterioso,
+            "lida": False
+        }).execute()
+
+        char_res = supabase.table("characters").select("user_id").eq("id", char_id).single().execute()
+        if char_res.data and char_res.data.get("user_id"):
+            await enviar_push_notification(
+                char_res.data["user_id"],
+                "🔮 Presságio",
+                texto_misterioso
+            )
+
+    return {"success": True}
 
 # ===================== RODAR =====================
 if __name__ == "__main__":
