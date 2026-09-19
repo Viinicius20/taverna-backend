@@ -2476,6 +2476,51 @@ async def deletar_evento_mundo(event_id: str):
     supabase.table("world_events").delete().eq("id", event_id).execute()
     return {"success": True}
 
+@app.get("/presagios")
+async def get_presagios():
+    try:
+        res = supabase.table("presagios").select("*").order("created_at", desc=True).execute()
+        return {"success": True, "data": res.data}
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao buscar presságios: {str(e)}")
+
+@app.post("/presagios")
+async def criar_presagio(data: dict = Body(...)):
+    try:
+        res = supabase.table("presagios").insert({
+            "campaign_id": data.get("campaign_id", "00000000-0000-0000-0000-000000000001"),
+            "texto": data.get("texto"),
+            "cumprido": False
+        }).execute()
+        return {"success": True, "data": res.data[0]}
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao criar presságio: {str(e)}")
+
+@app.patch("/presagios/{id}/cumprir")
+async def cumprir_presagio(id: str):
+    try:
+        res = supabase.table("presagios").update({"cumprido": True}).eq("id", id).execute()
+        return {"success": True, "data": res.data[0]}
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao cumprir presságio: {str(e)}")
+
+@app.delete("/presagios/{id}")
+async def deletar_presagio(id: str):
+    try:
+        supabase.table("presagios").delete().eq("id", id).execute()
+        return {"success": True}
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao deletar presságio: {str(e)}")
+
+# BESTIÁRIO — toggle descoberto
+@app.patch("/bestiary/{id}/descoberto")
+async def toggle_descoberto(id: str, data: dict = Body(...)):
+    try:
+        res = supabase.table("bestiary").update({"discovered": data.get("discovered")}).eq("id", id).execute()
+        return {"success": True, "data": res.data[0]}
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao atualizar bestiário: {str(e)}")
+
 # ===================== RODAR =====================
 if __name__ == "__main__":
     import uvicorn
