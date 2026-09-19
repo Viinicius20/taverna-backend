@@ -2521,7 +2521,6 @@ async def toggle_descoberto(id: str, data: dict = Body(...)):
         raise HTTPException(500, f"Erro ao atualizar bestiário: {str(e)}")
 
 class EnviarPresagioRequest(BaseModel):
-    presagio_id: str
     character_id: Optional[str] = None
 
 @app.post("/presagios/{presagio_id}/enviar")
