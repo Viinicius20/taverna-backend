@@ -2090,6 +2090,14 @@ async def encerrar_sessao(req: EncerrarSessaoRequest):
                     "progress_depois": novo_progresso
                 })
 
+                # NOVO: registra no log permanente do mundo
+                supabase.table("world_log").insert({
+                    "campaign_id": req.campaign_id,
+                    "session_number": novo_numero,
+                    "event_name": evento["name"],
+                    "description": f"{evento['name']} avançou de {evento.get('progress', 0)}% para {novo_progresso}% enquanto os jogadores estavam ausentes."
+                }).execute()
+
                 # Dispara cadeia se completou (mesma lógica do PATCH manual)
                 if novo_progresso >= 100 and evento.get("next_event_name") and not evento.get("triggered_event_id"):
                     novo_evento = supabase.table("world_events").insert({
@@ -2103,6 +2111,15 @@ async def encerrar_sessao(req: EncerrarSessaoRequest):
                         supabase.table("world_events").update({
                             "triggered_event_id": novo_evento.data[0]["id"]
                         }).eq("id", evento["id"]).execute()
+
+                    # Registra também a criação do novo evento no log
+                    supabase.table("world_log").insert({
+                        "campaign_id": req.campaign_id,
+                        "session_number": novo_numero,
+                        "event_name": evento["next_event_name"],
+                        "description": f"Novo evento surgiu como consequência de \"{evento['name']}\": {evento['next_event_name']}."
+                    }).execute()
+
     except Exception as log_error:
         print(f"[AVISO] Falha ao processar Mundo Vivo: {log_error}")
 
