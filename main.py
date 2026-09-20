@@ -2480,6 +2480,35 @@ async def deletar_evento_mundo(event_id: str):
     supabase.table("world_events").delete().eq("id", event_id).execute()
     return {"success": True}
 
+@app.post("/world-events/{event_id}/sugerir")
+async def sugerir_desdobramento(event_id: str):
+    result = supabase.table("world_events").select("*").eq("id", event_id).single().execute()
+    evento = result.data
+    if not evento:
+        raise HTTPException(404, "Evento não encontrado")
+
+    prompt = f"""
+    Você é um mestre de RPG ajudando outro mestre a decidir os próximos passos do mundo.
+
+    Evento em andamento:
+    Nome: {evento['name']}
+    Descrição: {evento.get('description', '')}
+    Progresso atual: {evento.get('progress', 0)}%
+    Consequências ao concluir: {evento.get('consequences', '')}
+
+    Sugira um desdobramento plausível e específico que poderia acontecer em breve, 
+    dado o estado atual deste evento. Seja concreto, algo que o mestre possa usar 
+    imediatamente na mesa (uma ação de facção, uma complicação, um sinal de que o 
+    evento está avançando).
+
+    Responda em 2-3 frases, direto ao ponto, sem introdução.
+    """
+    try:
+        sugestao = gerar_texto_com_gemini(prompt)
+        return {"success": True, "data": sugestao.strip()}
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao gerar sugestão: {str(e)}")
+
 @app.get("/presagios")
 async def get_presagios():
     try:
