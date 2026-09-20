@@ -2063,7 +2063,50 @@ async def encerrar_sessao(req: EncerrarSessaoRequest):
         "summary": resumo
     }).execute()
 
-    return {"success": True, "summary": resumo, "session_number": novo_numero}
+    eventos_avancados = []
+    try:
+        eventos_ativos = supabase.table("world_events").select("*") \
+            .eq("campaign_id", req.campaign_id) \
+            .eq("status", "ativo") \
+            .eq("locked_by_master", False) \
+            .execute()
+
+        for evento in eventos_ativos.data:
+            # Verifica se o evento foi mencionado nos eventos da sessão
+            mencionado = any(
+                evento["name"].lower() in ev["descricao"].lower()
+                for ev in eventos
+            )
+            if not mencionado:
+                novo_progresso = min(100, evento.get("progress", 0) + 15)
+                supabase.table("world_events").update({
+                    "progress": novo_progresso,
+                    "status": "concluido" if novo_progresso >= 100 else "ativo"
+                }).eq("id", evento["id"]).execute()
+
+                eventos_avancados.append({
+                    "name": evento["name"],
+                    "progress_antes": evento.get("progress", 0),
+                    "progress_depois": novo_progresso
+                })
+
+                # Dispara cadeia se completou (mesma lógica do PATCH manual)
+                if novo_progresso >= 100 and evento.get("next_event_name") and not evento.get("triggered_event_id"):
+                    novo_evento = supabase.table("world_events").insert({
+                        "campaign_id": req.campaign_id,
+                        "name": evento["next_event_name"],
+                        "description": evento.get("next_event_description", ""),
+                        "progress": 0,
+                        "status": "ativo"
+                    }).execute()
+                    if novo_evento.data:
+                        supabase.table("world_events").update({
+                            "triggered_event_id": novo_evento.data[0]["id"]
+                        }).eq("id", evento["id"]).execute()
+    except Exception as log_error:
+        print(f"[AVISO] Falha ao processar Mundo Vivo: {log_error}")
+
+    return {"success": True, "summary": resumo, "session_number": novo_numero, "eventos_avancados": eventos_avancados}
 
 class FactionRequest(BaseModel):
     campaign_id: str
