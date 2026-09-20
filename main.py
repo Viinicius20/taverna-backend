@@ -2125,6 +2125,11 @@ async def encerrar_sessao(req: EncerrarSessaoRequest):
 
     return {"success": True, "summary": resumo, "session_number": novo_numero, "eventos_avancados": eventos_avancados}
 
+@app.get("/world-log/{campaign_id}")
+async def listar_world_log(campaign_id: str):
+    result = supabase.table("world_log").select("*").eq("campaign_id", campaign_id).order("created_at", desc=True).execute()
+    return {"success": True, "data": result.data}
+
 class FactionRequest(BaseModel):
     campaign_id: str
     description: str
