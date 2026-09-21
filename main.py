@@ -937,17 +937,33 @@ async def get_sessions(campaign_id: str):
 @app.get("/boato")
 async def gerar_boato():
     import random
+
+    # Busca contexto do mundo atual
+    eventos_ativos = supabase.table("world_events").select("name, description, progress").eq("campaign_id", CAMPANHA_ID).eq("status", "ativo").execute().data
+    eventos_concluidos = supabase.table("world_events").select("name, consequences").eq("campaign_id", CAMPANHA_ID).eq("status", "concluido").execute().data
+    flags_ativas = supabase.table("campaign_flags").select("key, description").eq("campaign_id", CAMPANHA_ID).eq("value", True).execute().data
+
+    contexto_mundo = ""
+    if eventos_ativos:
+        contexto_mundo += "Eventos em andamento no mundo:\n" + "\n".join([f"- {e['name']} ({e['progress']}%): {e.get('description', '')}" for e in eventos_ativos])
+    if eventos_concluidos:
+        contexto_mundo += "\n\nEventos já concluídos:\n" + "\n".join([f"- {e['name']}: {e.get('consequences', '')}" for e in eventos_concluidos])
+    if flags_ativas:
+        contexto_mundo += "\n\nFatos estabelecidos no mundo:\n" + "\n".join([f"- {f.get('description', f['key'])}" for f in flags_ativas])
+
     falso = random.random() < 0.1
     tipo = "COMPLETAMENTE FALSO e absurdo" if falso else "VERDADEIRO sobre o mundo"
-    prompt = f"Você é um frequentador de taverna em um mundo de fantasia medieval. Gere um boato curto que estaria circulando na taverna. Este boato é {tipo}. Retorne APENAS um JSON: {{\"boato\": \"frase curta\", \"fonte\": \"quem espalha\", \"falso\": {str(falso).lower()}}}"
+
+    contexto_extra = f"\n\nLeve em conta o seguinte contexto atual do mundo da campanha, se fizer sentido:\n{contexto_mundo}" if contexto_mundo else ""
+
+    prompt = f"""Você é um frequentador de taverna em um mundo de fantasia medieval. Gere um boato curto que estaria circulando na taverna. Este boato é {tipo}.{contexto_extra}
+Retorne APENAS um JSON: {{"boato": "frase curta", "fonte": "quem espalha", "falso": {str(falso).lower()}}}"""
 
     try:
         raw = gerar_texto_com_gemini(prompt)
-        print(f"BOATO RAW: '{raw}'")
         raw = raw.strip().replace("```json", "").replace("```", "").strip()
         boato_data = json.loads(raw)
 
-        # Registra o evento pra memória da sessão — falha aqui não pode quebrar o boato
         try:
             supabase.table("session_events").insert({
                 "campaign_id": CAMPANHA_ID,
