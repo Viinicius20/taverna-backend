@@ -2644,6 +2644,46 @@ async def atualizar_evento_mundo(event_id: str, req: UpdateWorldEventRequest):
 
     return {"success": True}
 
+class FlagRequest(BaseModel):
+    campaign_id: str
+    key: str
+    value: bool = False
+    description: str = ""
+
+@app.post("/flags")
+async def criar_flag(req: FlagRequest):
+    try:
+        result = supabase.table("campaign_flags").insert({
+            "campaign_id": req.campaign_id,
+            "key": req.key,
+            "value": req.value,
+            "description": req.description
+        }).execute()
+        return {"success": True, "data": result.data[0] if result.data else None}
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao criar flag: {str(e)}")
+
+
+@app.get("/flags/{campaign_id}")
+async def listar_flags(campaign_id: str):
+    result = supabase.table("campaign_flags").select("*").eq("campaign_id", campaign_id).order("key").execute()
+    return {"success": True, "data": result.data}
+
+
+class UpdateFlagRequest(BaseModel):
+    value: bool
+
+@app.patch("/flags/{flag_id}")
+async def atualizar_flag(flag_id: str, req: UpdateFlagRequest):
+    supabase.table("campaign_flags").update({"value": req.value}).eq("id", flag_id).execute()
+    return {"success": True}
+
+
+@app.delete("/flags/{flag_id}")
+async def deletar_flag(flag_id: str):
+    supabase.table("campaign_flags").delete().eq("id", flag_id).execute()
+    return {"success": True}
+
 # ===================== RODAR =====================
 if __name__ == "__main__":
     import uvicorn
