@@ -2639,7 +2639,6 @@ async def toggle_descoberto(id: str, data: dict = Body(...)):
 
 
 def propagar_consequencias_evento(evento, campaign_id):
-    """Chamada quando um evento chega a 100% — propaga efeitos pra Facções e Flags"""
     try:
         if evento.get("affects_faction_id") and evento.get("faction_reputation_change"):
             supabase.table("factions").update({
@@ -2647,9 +2646,18 @@ def propagar_consequencias_evento(evento, campaign_id):
             }).eq("id", evento["affects_faction_id"]).execute()
 
         if evento.get("sets_flag_key"):
-            supabase.table("campaign_flags").update({
-                "value": True
-            }).eq("campaign_id", campaign_id).eq("key", evento["sets_flag_key"]).execute()
+            flag_key = evento["sets_flag_key"]
+            existente = supabase.table("campaign_flags").select("id").eq("campaign_id", campaign_id).eq("key", flag_key).execute()
+
+            if existente.data:
+                supabase.table("campaign_flags").update({"value": True}).eq("campaign_id", campaign_id).eq("key", flag_key).execute()
+            else:
+                supabase.table("campaign_flags").insert({
+                    "campaign_id": campaign_id,
+                    "key": flag_key,
+                    "value": True,
+                    "description": f"Criada automaticamente pelo evento: {evento['name']}"
+                }).execute()
     except Exception as e:
         print(f"[AVISO] Falha ao propagar consequências: {e}")
 
