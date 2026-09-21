@@ -1839,7 +1839,7 @@ Foque na aparência, presença e o que os aventureiros sentem ao se deparar com 
 Não mencione stats ou números. Escreva em português.
 Responda APENAS com a descrição, sem título ou introdução."""
 
-        descricao = await gerar_texto_com_gemini(prompt)
+        descricao = gerar_texto_com_gemini(prompt)
 
         return {
             "success": True,
