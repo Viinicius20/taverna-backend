@@ -2106,7 +2106,11 @@ async def encerrar_sessao(req: EncerrarSessaoRequest):
                     "progress_depois": novo_progresso
                 })
 
-                # NOVO: registra no log permanente do mundo
+                # NOVO: propaga consequências se completou
+                if novo_progresso >= 100:
+                    propagar_consequencias_evento(evento, req.campaign_id)
+
+                # registra no log permanente do mundo
                 supabase.table("world_log").insert({
                     "campaign_id": req.campaign_id,
                     "session_number": novo_numero,
@@ -2128,7 +2132,6 @@ async def encerrar_sessao(req: EncerrarSessaoRequest):
                             "triggered_event_id": novo_evento.data[0]["id"]
                         }).eq("id", evento["id"]).execute()
 
-                    # Registra também a criação do novo evento no log
                     supabase.table("world_log").insert({
                         "campaign_id": req.campaign_id,
                         "session_number": novo_numero,
@@ -2517,6 +2520,9 @@ class WorldEventRequest(BaseModel):
     consequences: str = ""
     next_event_name: str = ""
     next_event_description: str = ""
+    affects_faction_id: str = ""
+    faction_reputation_change: str = ""
+    sets_flag_key: str = ""
 
 @app.post("/world-events")
 async def criar_evento_mundo(req: WorldEventRequest):
@@ -2528,6 +2534,9 @@ async def criar_evento_mundo(req: WorldEventRequest):
         "consequences": req.consequences,
         "next_event_name": req.next_event_name,
         "next_event_description": req.next_event_description,
+        "affects_faction_id": req.affects_faction_id or None,
+        "faction_reputation_change": req.faction_reputation_change or None,
+        "sets_flag_key": req.sets_flag_key or None,
         "progress": 0,
         "status": "ativo"
     }).execute()
@@ -2548,12 +2557,6 @@ class UpdateWorldEventRequest(BaseModel):
     description: str = None
     deadline: str = None
     consequences: str = None
-
-@app.patch("/world-events/{event_id}")
-async def atualizar_evento_mundo(event_id: str, req: UpdateWorldEventRequest):
-    updates = {k: v for k, v in req.dict().items() if v is not None}
-    supabase.table("world_events").update(updates).eq("id", event_id).execute()
-    return {"success": True}
 
 
 @app.delete("/world-events/{event_id}")
@@ -2635,6 +2638,22 @@ async def toggle_descoberto(id: str, data: dict = Body(...)):
         raise HTTPException(500, f"Erro ao atualizar bestiário: {str(e)}")
 
 
+def propagar_consequencias_evento(evento, campaign_id):
+    """Chamada quando um evento chega a 100% — propaga efeitos pra Facções e Flags"""
+    try:
+        if evento.get("affects_faction_id") and evento.get("faction_reputation_change"):
+            supabase.table("factions").update({
+                "reputation": evento["faction_reputation_change"]
+            }).eq("id", evento["affects_faction_id"]).execute()
+
+        if evento.get("sets_flag_key"):
+            supabase.table("campaign_flags").update({
+                "value": True
+            }).eq("campaign_id", campaign_id).eq("key", evento["sets_flag_key"]).execute()
+    except Exception as e:
+        print(f"[AVISO] Falha ao propagar consequências: {e}")
+
+
 @app.patch("/world-events/{event_id}")
 async def atualizar_evento_mundo(event_id: str, req: UpdateWorldEventRequest):
     updates = {k: v for k, v in req.dict().items() if v is not None}
@@ -2642,23 +2661,26 @@ async def atualizar_evento_mundo(event_id: str, req: UpdateWorldEventRequest):
     result = supabase.table("world_events").update(updates).eq("id", event_id).execute()
     evento_atualizado = result.data[0] if result.data else None
 
-    # Se chegou a 100% e tem um próximo evento configurado, dispara a cadeia
-    if evento_atualizado and evento_atualizado.get("progress", 0) >= 100 and evento_atualizado.get(
-            "next_event_name") and not evento_atualizado.get("triggered_event_id"):
-        novo_evento = supabase.table("world_events").insert({
-            "campaign_id": evento_atualizado["campaign_id"],
-            "name": evento_atualizado["next_event_name"],
-            "description": evento_atualizado.get("next_event_description", ""),
-            "progress": 0,
-            "status": "ativo"
-        }).execute()
+    if evento_atualizado and evento_atualizado.get("progress", 0) >= 100:
+        propagar_consequencias_evento(evento_atualizado, evento_atualizado["campaign_id"])
 
-        if novo_evento.data:
-            supabase.table("world_events").update({
-                "triggered_event_id": novo_evento.data[0]["id"]
-            }).eq("id", event_id).execute()
+        # Se tem um próximo evento configurado, dispara a cadeia
+        if evento_atualizado.get("next_event_name") and not evento_atualizado.get("triggered_event_id"):
+            novo_evento = supabase.table("world_events").insert({
+                "campaign_id": evento_atualizado["campaign_id"],
+                "name": evento_atualizado["next_event_name"],
+                "description": evento_atualizado.get("next_event_description", ""),
+                "progress": 0,
+                "status": "ativo"
+            }).execute()
+
+            if novo_evento.data:
+                supabase.table("world_events").update({
+                    "triggered_event_id": novo_evento.data[0]["id"]
+                }).eq("id", event_id).execute()
 
     return {"success": True}
+
 
 class FlagRequest(BaseModel):
     campaign_id: str
