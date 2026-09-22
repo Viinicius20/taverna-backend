@@ -2756,6 +2756,41 @@ async def deletar_arquivo_mestre(item_id: str):
     supabase.table("arquivo_mestre").delete().eq("id", item_id).execute()
     return {"success": True}
 
+class ProphecyRequest(BaseModel):
+    campaign_id: str = "00000000-0000-0000-0000-000000000001"
+    texto: str
+    condicao: str
+
+@app.post("/prophecies")
+async def criar_profecia(req: ProphecyRequest):
+    result = supabase.table("prophecies").insert({
+        "campaign_id": req.campaign_id,
+        "texto": req.texto,
+        "condicao": req.condicao,
+        "status": "pendente"
+    }).execute()
+    return {"success": True, "data": result.data[0] if result.data else None}
+
+@app.get("/prophecies/{campaign_id}")
+async def listar_profecias(campaign_id: str):
+    result = supabase.table("prophecies").select("*").eq("campaign_id", campaign_id).execute()
+    return {"success": True, "data": result.data}
+
+class UpdateProphecyRequest(BaseModel):
+    status: str = None
+    notas_cumprimento: str = None
+
+@app.patch("/prophecies/{prophecy_id}")
+async def atualizar_profecia(prophecy_id: str, req: UpdateProphecyRequest):
+    updates = {k: v for k, v in req.dict().items() if v is not None}
+    supabase.table("prophecies").update(updates).eq("id", prophecy_id).execute()
+    return {"success": True}
+
+@app.delete("/prophecies/{prophecy_id}")
+async def deletar_profecia(prophecy_id: str):
+    supabase.table("prophecies").delete().eq("id", prophecy_id).execute()
+    return {"success": True}
+
 # ===================== RODAR =====================
 if __name__ == "__main__":
     import uvicorn
