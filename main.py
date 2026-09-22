@@ -2730,6 +2730,32 @@ async def deletar_flag(flag_id: str):
     supabase.table("campaign_flags").delete().eq("id", flag_id).execute()
     return {"success": True}
 
+class ArquivoMestreRequest(BaseModel):
+    campaign_id: str = "00000000-0000-0000-0000-000000000001"
+    categoria: str
+    texto: str
+
+@app.post("/arquivo-mestre")
+async def criar_arquivo_mestre(req: ArquivoMestreRequest):
+    result = supabase.table("arquivo_mestre").insert({
+        "campaign_id": req.campaign_id,
+        "categoria": req.categoria,
+        "texto": req.texto
+    }).execute()
+    return {"success": True, "data": result.data[0] if result.data else None}
+
+
+@app.get("/arquivo-mestre/{campaign_id}")
+async def listar_arquivo_mestre(campaign_id: str):
+    result = supabase.table("arquivo_mestre").select("*").eq("campaign_id", campaign_id).order("created_at", desc=True).execute()
+    return {"success": True, "data": result.data}
+
+
+@app.delete("/arquivo-mestre/{item_id}")
+async def deletar_arquivo_mestre(item_id: str):
+    supabase.table("arquivo_mestre").delete().eq("id", item_id).execute()
+    return {"success": True}
+
 # ===================== RODAR =====================
 if __name__ == "__main__":
     import uvicorn
