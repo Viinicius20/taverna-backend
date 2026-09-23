@@ -2798,20 +2798,20 @@ async def deletar_profecia(prophecy_id: str):
 
 
 class EventoRegional(BaseModel):
-    campanha_id: str
+    campaign_id: str
     regiao: str
     tipo_evento: str
     motivo: str
     modificadores: dict  # {"comida": 1.5, "armas": 1.3, "viagem": 0.6, "comercio": 0.7}
 
 
-@app.post("/eventos")
+@app.post("/economia/eventos")
 def criar_evento(evento: EventoRegional):
     resp = supabase.table("eventos_regionais").insert(evento.dict()).execute()
     return resp.data[0]
 
 
-@app.patch("/eventos/{evento_id}/encerrar")
+@app.patch("/economia/eventos/{evento_id}/encerrar")
 def encerrar_evento(evento_id: str):
     resp = supabase.table("eventos_regionais") \
         .update({"ativo": False}) \
@@ -2821,41 +2821,39 @@ def encerrar_evento(evento_id: str):
     return resp.data[0]
 
 
-@app.get("/eventos/{regiao}")
-def listar_eventos_ativos(regiao: str, campanha_id: str):
+@app.get("/economia/eventos-campanha/{campaign_id}")
+def listar_todos_eventos(campaign_id: str):
+    """Lista todos os eventos regionais (ativos e encerrados) — usado pela aba MundoVivo."""
     resp = supabase.table("eventos_regionais") \
         .select("*") \
-        .eq("regiao", regiao).eq("campanha_id", campanha_id).eq("ativo", True) \
-        .execute()
-    return resp.data
-
-
-@app.get("/eventos-campanha/{campanha_id}")
-def listar_todos_eventos(campanha_id: str):
-    """Lista todos os eventos regionais (ativos e encerrados) da campanha —
-    usado pela aba MundoVivo pra exibir e gerenciar de um lugar só."""
-    resp = supabase.table("eventos_regionais") \
-        .select("*") \
-        .eq("campanha_id", campanha_id) \
+        .eq("campaign_id", campaign_id) \
         .order("data_inicio", desc=True) \
         .execute()
     return {"data": resp.data}
 
 
-@app.get("/preco/{item_id}")
-def preco_atual(item_id: str, regiao: str, campanha_id: str):
-    item = supabase.table("itens").select("*").eq("id", item_id).single().execute().data
+@app.get("/economia/precos/{campaign_id}")
+def listar_precos_referencia(campaign_id: str):
+    """Lista os preços base cadastrados (comida, armas, poções...)."""
+    resp = supabase.table("precos_referencia").select("*").eq("campaign_id", campaign_id).execute()
+    return {"data": resp.data}
+
+
+@app.get("/economia/preco/{item_id}")
+def preco_atual(item_id: str, regiao: str, campaign_id: str):
+    item = supabase.table("precos_referencia").select("*").eq("id", item_id).single().execute().data
     if not item:
         raise HTTPException(404, "Item não encontrado")
 
     preco_base = item["preco_base"]
-    categoria = item.get("categoria", "geral")
+    categoria = item["categoria"]
 
-    eventos = listar_eventos_ativos(regiao, campanha_id)
+    eventos = listar_todos_eventos(campaign_id)["data"]
+    eventos_ativos = [e for e in eventos if e["ativo"] and e["regiao"] == regiao]
 
     multiplicador_final = 1.0
     motivos = []
-    for evento in eventos:
+    for evento in eventos_ativos:
         mod = evento["modificadores"].get(categoria)
         if mod:
             multiplicador_final *= mod
@@ -2864,54 +2862,40 @@ def preco_atual(item_id: str, regiao: str, campanha_id: str):
     preco_atual = round(preco_base * multiplicador_final, 2)
 
     return {
+        "nome_item": item["nome_item"],
         "preco_atual": preco_atual,
         "preco_normal": preco_base,
         "motivo": " + ".join(motivos) if motivos else None,
     }
 
 
+CHANCE_EVENTO_POR_DIA = 0.35
+
+
 class IniciarViagem(BaseModel):
-    campanha_id: str
-    cidade_origem_id: str
-    cidade_destino_id: str
+    campaign_id: str
+    origem_id: str
+    destino_id: str
+    tempo_estimado_dias: float
+    clima: Optional[str] = None
 
 
-def _distancia(c1: dict, c2: dict) -> float:
-    x1, y1 = c1["coordenadas"]["x"], c1["coordenadas"]["y"]
-    x2, y2 = c2["coordenadas"]["x"], c2["coordenadas"]["y"]
-    return math.dist((x1, y1), (x2, y2))
-
-
-@app.get("/cidades/{campanha_id}")
-def listar_cidades(campanha_id: str):
-    resp = supabase.table("cidades").select("*").eq("campanha_id", campanha_id).execute()
+@app.get("/viagem/locais/{campaign_id}")
+def listar_locais_para_viagem(campaign_id: str):
+    """Popula os selects de origem/destino com os Locais já cadastrados."""
+    resp = supabase.table("locations").select("id, name, region_info, monsters, commerce") \
+        .eq("campaign_id", campaign_id).execute()
     return {"data": resp.data}
 
 
-@app.post("/iniciar")
+@app.post("/viagem/iniciar")
 def iniciar_viagem(payload: IniciarViagem):
-    origem = supabase.table("cidades").select("*").eq("id", payload.cidade_origem_id).single().execute().data
-    destino = supabase.table("cidades").select("*").eq("id", payload.cidade_destino_id).single().execute().data
-    if not origem or not destino:
-        raise HTTPException(404, "Cidade não encontrada")
-
-    distancia_km = _distancia(origem, destino)
-    tempo_dias = max(1, round(distancia_km / VELOCIDADE_KM_DIA))
-
-    viagem = {
-        "campanha_id": payload.campanha_id,
-        "cidade_origem_id": origem["id"],
-        "cidade_destino_id": destino["id"],
-        "distancia_km": distancia_km,
-        "tempo_estimado_dias": tempo_dias,
-        "clima": destino.get("clima_padrao", "Ameno"),
-        "recursos_consumidos": {"racoes": 0, "agua": 0},
-    }
+    viagem = payload.dict()
     resp = supabase.table("viagens").insert(viagem).execute()
     return resp.data[0]
 
 
-@app.post("/{viagem_id}/avancar")
+@app.post("/viagem/{viagem_id}/avancar")
 def avancar_dia(viagem_id: str):
     viagem = supabase.table("viagens").select("*").eq("id", viagem_id).single().execute().data
     if not viagem:
@@ -2921,27 +2905,31 @@ def avancar_dia(viagem_id: str):
 
     dia_atual = viagem["dia_atual"] + 1
     eventos = viagem["eventos"] or []
-    recursos = viagem["recursos_consumidos"] or {"racoes": 0, "agua": 0}
-    recursos["racoes"] = recursos.get("racoes", 0) + 1
-    recursos["agua"] = recursos.get("agua", 0) + 1
 
     if random.random() < CHANCE_EVENTO_POR_DIA:
-        destino = supabase.table("cidades").select("*").eq("id", viagem["cidade_destino_id"]).single().execute().data
+        origem = supabase.table("locations").select("*").eq("id", viagem["origem_id"]).single().execute().data
+        destino = supabase.table("locations").select("*").eq("id", viagem["destino_id"]).single().execute().data
+
         prompt = (
-            f"Gere um evento curto (1-2 frases) de estrada para uma viagem de D&D 5e. "
-            f"Região: {destino.get('regiao', 'desconhecida')}. Clima: {viagem['clima']}. "
+            f"Gere um evento curto (1-2 frases) de estrada para uma viagem de D&D 5e, "
+            f"entre '{origem['name']}' e '{destino['name']}'.\n"
+            f"Contexto da região: {destino.get('region_info') or origem.get('region_info') or 'desconhecido'}.\n"
+            f"Ameaças possíveis na área: {destino.get('monsters') or origem.get('monsters') or 'nenhuma informada'}.\n"
+            f"Comércio/recursos da região: {destino.get('commerce') or origem.get('commerce') or 'nenhum informado'}.\n"
+            f"Clima: {viagem.get('clima') or 'não especificado'}.\n"
             f"Pode ser perigo, encontro, achado ou obstáculo. Não resolva o evento, "
             f"apenas descreva a situação para o Mestre decidir o que fazer."
         )
-        client_atual = genai.Client(api_key=GEMINI_KEYS[0])
+
         try:
-            resposta = client_atual.models.generate_content(
+            resposta = client.models.generate_content(
                 model="gemini-2.0-flash",
                 contents=prompt,
             )
             descricao = resposta.text.strip()
         except ServerError:
             descricao = "A estrada segue tranquila por hoje."
+
         eventos.append({"dia": dia_atual, "descricao": descricao, "resolvido": False})
 
     status = "concluida" if dia_atual >= viagem["tempo_estimado_dias"] else "em_andamento"
@@ -2949,24 +2937,24 @@ def avancar_dia(viagem_id: str):
     resp = supabase.table("viagens").update({
         "dia_atual": dia_atual,
         "eventos": eventos,
-        "recursos_consumidos": recursos,
         "status": status,
     }).eq("id", viagem_id).execute()
 
     return resp.data[0]
 
 
-@app.get("/campanha/{campanha_id}")
-def listar_viagens(campanha_id: str):
+@app.get("/viagem/campanha/{campaign_id}")
+def listar_viagens(campaign_id: str):
+    """Lista viagens da campanha (mais recentes primeiro) — usado pela aba MundoVivo."""
     resp = supabase.table("viagens") \
-        .select("*, cidade_origem_id(nome), cidade_destino_id(nome)") \
-        .eq("campanha_id", campanha_id) \
+        .select("*, origem_id(name), destino_id(name)") \
+        .eq("campaign_id", campaign_id) \
         .order("criado_em", desc=True) \
         .execute()
     return {"data": resp.data}
 
 
-@app.get("/{viagem_id}")
+@app.get("/viagem/{viagem_id}")
 def status_viagem(viagem_id: str):
     resp = supabase.table("viagens").select("*").eq("id", viagem_id).single().execute()
     if not resp.data:
