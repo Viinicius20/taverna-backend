@@ -2945,14 +2945,12 @@ def avancar_dia(viagem_id: str):
 
 @app.get("/viagem/campanha/{campaign_id}")
 def listar_viagens(campaign_id: str):
-    """Lista viagens da campanha (mais recentes primeiro) — usado pela aba MundoVivo."""
     resp = supabase.table("viagens") \
-        .select("*, origem_id(name), destino_id(name)") \
+        .select("*, origem:origem_id(name), destino:destino_id(name)") \
         .eq("campaign_id", campaign_id) \
         .order("criado_em", desc=True) \
         .execute()
     return {"data": resp.data}
-
 
 @app.get("/viagem/{viagem_id}")
 def status_viagem(viagem_id: str):
