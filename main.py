@@ -2868,6 +2868,13 @@ def preco_atual(item_id: str, regiao: str, campaign_id: str):
         "motivo": " + ".join(motivos) if motivos else None,
     }
 
+@app.delete("/economia/eventos/{evento_id}")
+def deletar_evento(evento_id: str):
+    resp = supabase.table("eventos_regionais").delete().eq("id", evento_id).execute()
+    if not resp.data:
+        raise HTTPException(404, "Evento não encontrado")
+    return {"ok": True}
+
 
 CHANCE_EVENTO_POR_DIA = 0.35
 
@@ -2882,7 +2889,6 @@ class IniciarViagem(BaseModel):
 
 @app.get("/viagem/locais/{campaign_id}")
 def listar_locais_para_viagem(campaign_id: str):
-    """Popula os selects de origem/destino com os Locais já cadastrados."""
     resp = supabase.table("locations").select("id, name, region_info, monsters, commerce") \
         .eq("campaign_id", campaign_id).execute()
     return {"data": resp.data}
