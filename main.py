@@ -2910,6 +2910,8 @@ def avancar_dia(viagem_id: str):
         origem = supabase.table("locations").select("*").eq("id", viagem["origem_id"]).single().execute().data
         destino = supabase.table("locations").select("*").eq("id", viagem["destino_id"]).single().execute().data
 
+        ja_aconteceu = "\n".join(f"- {e['descricao']}" for e in eventos) or "nenhum ainda"
+
         prompt = (
             f"Gere um evento curto (1-2 frases) de estrada para uma viagem de D&D 5e, "
             f"entre '{origem['name']}' e '{destino['name']}'.\n"
@@ -2917,18 +2919,20 @@ def avancar_dia(viagem_id: str):
             f"Ameaças possíveis na área: {destino.get('monsters') or origem.get('monsters') or 'nenhuma informada'}.\n"
             f"Comércio/recursos da região: {destino.get('commerce') or origem.get('commerce') or 'nenhum informado'}.\n"
             f"Clima: {viagem.get('clima') or 'não especificado'}.\n"
-            f"Pode ser perigo, encontro, achado ou obstáculo. Não resolva o evento, "
-            f"apenas descreva a situação para o Mestre decidir o que fazer."
+            f"Eventos que JÁ aconteceram nesta viagem (não repita o mesmo tipo de situação):\n{ja_aconteceu}\n"
+            f"Pode ser perigo, encontro, achado ou obstáculo — varie o tipo em relação aos anteriores. "
+            f"Não resolva o evento, apenas descreva a situação para o Mestre decidir o que fazer."
         )
 
         try:
             resposta = client.models.generate_content(
                 model="gemini-3.6-flash",
                 contents=prompt,
+                config={"temperature": 1.1},
             )
-            descricao = resposta.text.strip()
-        except ServerError:
-            descricao = "A estrada segue tranquila por hoje."
+            eventos.append({"dia": dia_atual, "descricao": resposta.text.strip(), "resolvido": False})
+        except (ServerError, ClientError):
+            pass
 
         eventos.append({"dia": dia_atual, "descricao": descricao, "resolvido": False})
 
