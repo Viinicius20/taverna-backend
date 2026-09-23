@@ -2959,6 +2959,13 @@ def status_viagem(viagem_id: str):
         raise HTTPException(404, "Viagem não encontrada")
     return resp.data
 
+@app.delete("/viagem/{viagem_id}")
+def deletar_viagem(viagem_id: str):
+    resp = supabase.table("viagens").delete().eq("id", viagem_id).execute()
+    if not resp.data:
+        raise HTTPException(404, "Viagem não encontrada")
+    return {"ok": True}
+
 # ===================== RODAR =====================
 if __name__ == "__main__":
     import uvicorn
