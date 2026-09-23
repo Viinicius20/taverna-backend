@@ -2923,7 +2923,7 @@ def avancar_dia(viagem_id: str):
 
         try:
             resposta = client.models.generate_content(
-                model="gemini-2.0-flash",
+                model="gemini-3.6-flash",
                 contents=prompt,
             )
             descricao = resposta.text.strip()
