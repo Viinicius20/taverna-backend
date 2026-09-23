@@ -2934,8 +2934,6 @@ def avancar_dia(viagem_id: str):
         except (ServerError, ClientError):
             pass
 
-        eventos.append({"dia": dia_atual, "descricao": descricao, "resolvido": False})
-
     status = "concluida" if dia_atual >= viagem["tempo_estimado_dias"] else "em_andamento"
 
     resp = supabase.table("viagens").update({
