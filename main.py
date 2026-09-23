@@ -10,7 +10,7 @@ import tempfile
 import urllib.parse
 import math
 import random
-from google.genai.errors import ServerError
+from google.genai.errors import ServerError, ClientError
 from fastapi import FastAPI, HTTPException, UploadFile, File, Request, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
