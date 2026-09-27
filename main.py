@@ -2143,6 +2143,15 @@ async def encerrar_sessao(req: EncerrarSessaoRequest):
                         "event_name": evento["next_event_name"],
                         "description": f"Novo evento surgiu como consequência de \"{evento['name']}\": {evento['next_event_name']}."
                     }).execute()
+                    if eventos_avancados:
+                        linhas = [f"⏳ {e['name']}: {e['progress_antes']}% → {e['progress_depois']}%" for e in
+                                  eventos_avancados]
+                        conteudo = "🌎 O mundo mudou enquanto vocês estavam ocupados:\n\n" + "\n".join(linhas)
+                        supabase.table("world_changelog").insert({
+                            "campaign_id": req.campaign_id,
+                            "session_number": novo_numero,
+                            "content": conteudo,
+                        }).execute()
 
     except Exception as log_error:
         print(f"[AVISO] Falha ao processar Mundo Vivo: {log_error}")
@@ -2693,6 +2702,35 @@ async def atualizar_evento_mundo(event_id: str, req: UpdateWorldEventRequest):
                 }).eq("id", event_id).execute()
 
     return {"success": True}
+
+@app.get("/world-changelog/{campaign_id}/nao-lido/{personagem_id}")
+def changelog_nao_lido(campaign_id: str, personagem_id: str):
+    resp = supabase.table("world_changelog").select("*") \
+        .eq("campaign_id", campaign_id) \
+        .order("created_at", desc=True).limit(5).execute()
+    nao_lidos = [c for c in resp.data if personagem_id not in (c.get("visto_por") or [])]
+    return {"data": nao_lidos}
+
+
+@app.post("/world-changelog/{changelog_id}/marcar-lido")
+def marcar_changelog_lido(changelog_id: str, personagem_id: str = Body(..., embed=True)):
+    item = supabase.table("world_changelog").select("*").eq("id", changelog_id).single().execute().data
+    if not item:
+        raise HTTPException(404, "Changelog não encontrado")
+    visto = item.get("visto_por") or []
+    if personagem_id not in visto:
+        visto.append(personagem_id)
+    supabase.table("world_changelog").update({"visto_por": visto}).eq("id", changelog_id).execute()
+    return {"ok": True}
+
+
+@app.get("/world-changelog/{campaign_id}")
+def listar_changelog(campaign_id: str):
+    """Histórico completo — usado pelo mestre no MundoVivo."""
+    resp = supabase.table("world_changelog").select("*") \
+        .eq("campaign_id", campaign_id) \
+        .order("created_at", desc=True).execute()
+    return {"data": resp.data}
 
 
 class FlagRequest(BaseModel):
