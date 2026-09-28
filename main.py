@@ -3018,6 +3018,71 @@ def deletar_viagem(viagem_id: str):
         raise HTTPException(404, "Viagem não encontrada")
     return {"ok": True}
 
+class StagesReq(BaseModel):
+    campaign_id: str
+    npc_id: str
+    stages: list[str]
+
+class GerarStagesReq(BaseModel):
+    npc_name: str
+    secret: str
+
+class AvancarSegredoReq(BaseModel):
+    npc_name: str
+    secret: str
+
+
+@app.get("/secret-stages/{campaign_id}/{npc_id}")
+def get_secret_stages(campaign_id: str, npc_id: str):
+    r = supabase.table("npc_secret_stages").select("*") \
+        .eq("campaign_id", campaign_id).eq("npc_id", npc_id).execute()
+    return {"data": r.data[0] if r.data else None}
+
+
+@app.post("/secret-stages")
+def salvar_secret_stages(req: StagesReq):
+    r = supabase.table("npc_secret_stages").upsert(
+        {"campaign_id": req.campaign_id, "npc_id": req.npc_id, "stages": req.stages},
+        on_conflict="campaign_id,npc_id"
+    ).execute()
+    return {"data": r.data[0]}
+
+
+@app.post("/secret-stages/gerar")
+def gerar_secret_stages(req: GerarStagesReq):
+    prompt = f"""
+    Segredo do NPC {req.npc_name}: "{req.secret}"
+
+    Crie 3 estágios graduais de revelação desse segredo, do mais vago ao mais próximo da verdade,
+    SEM entregar a verdade completa:
+    1) uma pista sutil e ambígua;
+    2) uma suspeita mais concreta;
+    3) uma descoberta parcial (quase tudo, faltando o essencial).
+
+    Cada estágio deve ter 1-2 frases, escritas como algo que os jogadores perceberiam.
+    Responda com exatamente 3 linhas, uma por estágio, sem numeração, sem markdown, sem aspas.
+    """
+    texto = gerar_texto_com_gemini(prompt).strip()
+    linhas = [l.strip("-•*0123456789.) ").strip() for l in texto.split("\n") if l.strip()]
+    if len(linhas) < 3:
+        raise HTTPException(500, "A IA não retornou os 3 estágios.")
+    return {"data": linhas[:3]}
+
+
+@app.post("/secret-stages/{stage_id}/avancar")
+def avancar_secret_stage(stage_id: str, req: AvancarSegredoReq):
+    row = supabase.table("npc_secret_stages").select("*").eq("id", stage_id).single().execute().data
+    if not row:
+        raise HTTPException(404, "Segredo não encontrado")
+    nivel = row["nivel_revelado"]
+    if nivel >= 4:
+        raise HTTPException(400, "Segredo já totalmente revelado")
+    novo = nivel + 1
+    rotulos = {1: "👁️ Pista", 2: "❓ Suspeita", 3: "💡 Descoberta parcial", 4: "🔓 Verdade"}
+    texto = req.secret if novo == 4 else row["stages"][novo - 1]
+    supabase.table("npc_secret_stages").update({"nivel_revelado": novo}).eq("id", stage_id).execute()
+    return {"nivel_revelado": novo, "message": f"{rotulos[novo]} sobre {req.npc_name}: {texto}"}
+
 # ===================== RODAR =====================
 if __name__ == "__main__":
     import uvicorn
