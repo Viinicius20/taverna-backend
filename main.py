@@ -2143,6 +2143,7 @@ async def encerrar_sessao(req: EncerrarSessaoRequest):
                         "event_name": evento["next_event_name"],
                         "description": f"Novo evento surgiu como consequência de \"{evento['name']}\": {evento['next_event_name']}."
                     }).execute()
+
                     if eventos_avancados:
                         linhas = [f"⏳ {e['name']}: {e['progress_antes']}% → {e['progress_depois']}%" for e in
                                   eventos_avancados]
