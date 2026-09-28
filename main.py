@@ -2732,6 +2732,11 @@ def listar_changelog(campaign_id: str):
         .order("created_at", desc=True).execute()
     return {"data": resp.data}
 
+@app.post("/world-changelog/{changelog_id}/marcar-lido-mestre")
+def marcar_changelog_lido_mestre(changelog_id: str):
+    supabase.table("world_changelog").update({"visto_mestre": True}).eq("id", changelog_id).execute()
+    return({"ok": True})
+
 
 class FlagRequest(BaseModel):
     campaign_id: str
