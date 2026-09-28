@@ -1263,13 +1263,54 @@ class EncountroRequest(BaseModel):
     bioma: str = "floresta"
     nivel: int = 5
     contexto: str = ""
+    usar_mundo: bool = True
 
 @app.post("/encounter/generate")
 async def generate_encounter(req: EncountroRequest):
-    prompt = f"""Você é um mestre de D&D 5e experiente.
-Gere um encontro aleatório para um grupo de nível {req.nivel} em {req.bioma}.
-{f'Contexto adicional: {req.contexto}' if req.contexto else ''}
+    contexto_mundo = ""
+    if req.usar_mundo:
+        try:
+            eventos = supabase.table("world_events").select("name, description, progress") \
+                .eq("campaign_id", CAMPANHA_ID).eq("status", "ativo").execute().data or []
+            flags = supabase.table("campaign_flags").select("key, description") \
+                .eq("campaign_id", CAMPANHA_ID).eq("value", True).execute().data or []
+            regionais = supabase.table("eventos_regionais").select("regiao, tipo_evento, motivo") \
+                .eq("campaign_id", CAMPANHA_ID).eq("ativo", True).execute().data or []
+            faccoes = supabase.table("factions").select("name, type, reputation") \
+                .eq("campaign_id", CAMPANHA_ID).execute().data or []
 
+            partes = []
+            if eventos:
+                partes.append("Eventos em andamento no mundo:\n" + "\n".join(
+                    f"- {e['name']} ({e.get('progress', 0)}%): {e.get('description') or ''}" for e in eventos))
+            if regionais:
+                partes.append("Situação regional:\n" + "\n".join(
+                    f"- {r['regiao']}: {r['tipo_evento']} ({r['motivo']})" for r in regionais))
+            if flags:
+                partes.append("Fatos estabelecidos: " + "; ".join(
+                    f"{f['key']}" + (f" ({f['description']})" if f.get('description') else "") for f in flags))
+            if faccoes:
+                partes.append("Facções: " + "; ".join(
+                    f"{f['name']} ({f.get('type') or '?'}, reputação {f.get('reputation') or 'neutra'})" for f in faccoes))
+            contexto_mundo = "\n\n".join(partes)
+        except Exception as e:
+            print(f"[AVISO] Falha ao buscar estado do mundo: {e}")
+
+    bloco_mundo = f"""
+ESTADO ATUAL DO MUNDO:
+{contexto_mundo}
+
+O encontro DEVE ser coerente com esse estado. Evite encontros genéricos e aleatórios
+(ex: "3 goblins atacam") quando o mundo está em guerra, crise ou tensão. Prefira situações
+que reflitam o que está acontecendo (desertores, patrulhas, refugiados, espiões, emissários),
+podendo ou não ser combate. Escolha apenas os elementos do estado que fazem sentido para
+este bioma; não precisa usar todos.
+""" if contexto_mundo else ""
+
+    prompt = f"""Você é um mestre de D&D 5e experiente.
+Gere um encontro para um grupo de nível {req.nivel} em {req.bioma}.
+{f'Contexto adicional: {req.contexto}' if req.contexto else ''}
+{bloco_mundo}
 Retorne APENAS um JSON válido:
 {{
   "titulo": "Nome do encontro",
@@ -1278,20 +1319,12 @@ Retorne APENAS um JSON válido:
     {{"nome": "Nome do inimigo", "quantidade": 2, "cr": "1/2"}}
   ],
   "diferencial": "Um elemento surpresa ou twist do encontro",
-  "recompensa": "Sugestão de recompensa (XP e itens)"
+  "recompensa": "Sugestão de recompensa (XP e itens)",
+  "ligacao_mundo": "Em 1 frase, como este encontro se conecta ao estado do mundo (vazio se não houver estado)"
 }}"""
     try:
-        response = client.models.generate_content(
-            model='gemini-2.5-flash',
-            contents=[{"role": "user", "parts": [{"text": prompt}]}]
-        )
-        raw = response.text.strip().replace("```json", "").replace("```", "").strip()
+        raw = gerar_texto_com_gemini(prompt).strip().replace("```json", "").replace("```", "").strip()
         return {"success": True, "data": json.loads(raw)}
-    except json.JSONDecodeError:
-        raise HTTPException(400, {"error": "IA não retornou JSON válido"})
-    except Exception as e:
-        print(f"ERRO ENCOUNTER: {e}")
-        raise HTTPException(500, {"error": f"Erro ao gerar encontro: {str(e)}"})
 
 class SecretMessageRequest(BaseModel):
     campaign_id: str
