@@ -3062,8 +3062,23 @@ def gerar_secret_stages(req: GerarStagesReq):
     Cada estágio deve ter 1-2 frases, escritas como algo que os jogadores perceberiam.
     Responda com exatamente 3 linhas, uma por estágio, sem numeração, sem markdown, sem aspas.
     """
-    texto = gerar_texto_com_gemini(prompt).strip()
-    linhas = [l.strip("-•*0123456789.) ").strip() for l in texto.split("\n") if l.strip()]
+    texto = gerar_texto_com_gemini(prompt).strip().replace("```json", "").replace("```", "").strip()
+
+    linhas = None
+    try:
+        parsed = json.loads(texto)
+        if isinstance(parsed, list):
+            linhas = [str(x).strip() for x in parsed]
+    except Exception:
+        pass
+
+    if not linhas:
+        linhas = [
+            l.strip().strip('[]",\'-•* ').lstrip("0123456789.) ").strip()
+            for l in texto.split("\n")
+            if l.strip() and l.strip() not in ("[", "]")
+        ]
+
     if len(linhas) < 3:
         raise HTTPException(500, "A IA não retornou os 3 estágios.")
     return {"data": linhas[:3]}
