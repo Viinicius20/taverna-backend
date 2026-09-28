@@ -3363,6 +3363,119 @@ def marcar_downtime_visto(req_id: str):
     supabase.table("downtime_requests").update({"visto_jogador": True}).eq("id", req_id).execute()
     return {"ok": True}
 
+class ConsequenciaCriarReq(BaseModel):
+    campaign_id: str
+    gatilho: str
+    consequencia: Optional[str] = None
+    condicao_tipo: str = "manual"   # manual | sessao | flag
+    condicao_valor: Optional[str] = None
+
+class ConsequenciaGerarReq(BaseModel):
+    gatilho: str
+
+class ConsequenciaRevelarReq(BaseModel):
+    enviar_sussurro: bool = False
+    personagem_ids: Optional[list[str]] = None
+
+
+@app.post("/consequencias/gerar")
+def gerar_consequencia(req: ConsequenciaGerarReq):
+    prompt = f"""Você é um mestre de D&D 5e criando um gancho narrativo de longo prazo.
+Ação dos jogadores: "{req.gatilho}"
+
+Crie UMA consequência oculta e interessante dessa ação, que só será revelada mais tarde.
+Deve ser algo que os jogadores não podem prever, mas que faça sentido causal com a ação.
+2-3 frases. Responda APENAS com o texto da consequência, sem prefixos, sem aspas, sem markdown."""
+    texto = gerar_texto_com_gemini(prompt).strip()
+    return {"data": texto}
+
+
+@app.post("/consequencias")
+def criar_consequencia(req: ConsequenciaCriarReq):
+    ultima = supabase.table("sessions").select("session_number") \
+        .eq("campaign_id", req.campaign_id).order("session_number", desc=True).limit(1).execute().data
+    numero_atual = ultima[0]["session_number"] if ultima else 0
+
+    r = supabase.table("consequencias_ocultas").insert({
+        "campaign_id": req.campaign_id,
+        "gatilho": req.gatilho,
+        "consequencia": req.consequencia,
+        "condicao_tipo": req.condicao_tipo,
+        "condicao_valor": req.condicao_valor,
+        "session_number_criacao": numero_atual,
+    }).execute()
+    return {"data": r.data[0]}
+
+
+@app.get("/consequencias/{campaign_id}")
+def listar_consequencias(campaign_id: str):
+    r = supabase.table("consequencias_ocultas").select("*") \
+        .eq("campaign_id", campaign_id).order("created_at", desc=True).execute()
+    return {"data": r.data}
+
+
+@app.get("/consequencias/prontas/{campaign_id}")
+def consequencias_prontas(campaign_id: str):
+    """Consequências com condição automática já satisfeita, ainda ocultas."""
+    ocultas = supabase.table("consequencias_ocultas").select("*") \
+        .eq("campaign_id", campaign_id).eq("status", "oculta").execute().data or []
+
+    ultima = supabase.table("sessions").select("session_number") \
+        .eq("campaign_id", campaign_id).order("session_number", desc=True).limit(1).execute().data
+    sessao_atual = ultima[0]["session_number"] if ultima else 0
+
+    flags_ativas = supabase.table("campaign_flags").select("key") \
+        .eq("campaign_id", campaign_id).eq("value", True).execute().data or []
+    flags_keys = {f["key"] for f in flags_ativas}
+
+    prontas = []
+    for c in ocultas:
+        if c["condicao_tipo"] == "sessao" and c["condicao_valor"]:
+            try:
+                if sessao_atual >= int(c["condicao_valor"]):
+                    prontas.append(c)
+            except ValueError:
+                pass
+        elif c["condicao_tipo"] == "flag" and c["condicao_valor"] in flags_keys:
+            prontas.append(c)
+
+    return {"data": prontas}
+
+
+@app.post("/consequencias/{cid}/revelar")
+def revelar_consequencia(cid: str, req: ConsequenciaRevelarReq):
+    c = supabase.table("consequencias_ocultas").select("*").eq("id", cid).single().execute().data
+    if not c:
+        raise HTTPException(404, "Não encontrada")
+
+    supabase.table("consequencias_ocultas").update({
+        "status": "revelada",
+        "revelada_em": datetime.utcnow().isoformat(),
+    }).eq("id", cid).execute()
+
+    supabase.table("world_log").insert({
+        "campaign_id": c["campaign_id"],
+        "session_number": c.get("session_number_criacao") or 0,
+        "event_name": "Consequência revelada",
+        "description": f"{c['consequencia']} (originada de: \"{c['gatilho']}\")",
+    }).execute()
+
+    if req.enviar_sussurro and req.personagem_ids:
+        for pid in req.personagem_ids:
+            supabase.table("secret-messages" if False else "secret_messages").insert({
+                "campaign_id": c["campaign_id"],
+                "character_id": pid,
+                "message": f"🕯️ {c['consequencia']}",
+            }).execute()
+
+    return {"ok": True}
+
+
+@app.delete("/consequencias/{cid}")
+def deletar_consequencia(cid: str):
+    supabase.table("consequencias_ocultas").delete().eq("id", cid).execute()
+    return {"ok": True}
+
 # ===================== RODAR =====================
 if __name__ == "__main__":
     import uvicorn
