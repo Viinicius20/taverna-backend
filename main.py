@@ -36,6 +36,8 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 VELOCIDADE_KM_DIA = 40
 CHANCE_EVENTO_POR_DIA = 0.35
 
+ATIVIDADES_DOWNTIME = ["treinar", "trabalhar", "pesquisar", "viajar", "fabricar item", "investigar", "socializar", "descansar"]
+
 VAPID_PRIVATE_KEY = os.getenv("VAPID_PRIVATE_KEY")
 VAPID_PUBLIC_KEY = os.getenv("VAPID_PUBLIC_KEY")
 VAPID_CLAIMS = {"sub": "mailto:viniciusamoury0403@gmail.com"}
@@ -3282,6 +3284,83 @@ def publicar_gazeta(gazeta_id: str):
 @app.delete("/gazeta/{gazeta_id}")
 def deletar_gazeta(gazeta_id: str):
     supabase.table("gazetas").delete().eq("id", gazeta_id).execute()
+    return {"ok": True}
+
+class DowntimeSolicitarReq(BaseModel):
+    campaign_id: str
+    character_id: str
+    character_name: str
+    atividade: str
+    foco: Optional[str] = None
+
+class DowntimeResolverReq(BaseModel):
+    consequencia_final: str
+    aprovado: bool
+
+
+@app.post("/downtime/solicitar")
+def solicitar_downtime(req: DowntimeSolicitarReq):
+    if req.atividade not in ATIVIDADES_DOWNTIME:
+        raise HTTPException(400, "Atividade inválida")
+
+    prompt = f"""Você é um mestre de D&D 5e narrando o downtime entre sessões.
+Personagem: {req.character_name}.
+Atividade escolhida: {req.atividade}.
+{f'Detalhe dado pelo jogador: {req.foco}' if req.foco else ''}
+
+Escreva uma consequência curta (2-3 frases) e interessante para essa atividade,
+como um resultado narrativo que o Mestre pode ajustar antes de confirmar.
+Pode ser positiva, neutra ou trazer uma complicação leve — evite exageros que
+mudem drasticamente a campanha sem intervenção do Mestre.
+Responda APENAS com o texto da consequência, sem prefixos, sem aspas, sem markdown."""
+
+    try:
+        sugestao = gerar_texto_com_gemini(prompt).strip()
+    except Exception:
+        sugestao = ""
+
+    r = supabase.table("downtime_requests").insert({
+        "campaign_id": req.campaign_id,
+        "character_id": req.character_id,
+        "character_name": req.character_name,
+        "atividade": req.atividade,
+        "foco": req.foco,
+        "consequencia_sugerida": sugestao,
+    }).execute()
+    return {"data": r.data[0]}
+
+
+@app.get("/downtime/pendentes/{campaign_id}")
+def listar_downtime_pendentes(campaign_id: str):
+    r = supabase.table("downtime_requests").select("*") \
+        .eq("campaign_id", campaign_id).eq("status", "pendente") \
+        .order("created_at").execute()
+    return {"data": r.data}
+
+
+@app.post("/downtime/{req_id}/resolver")
+def resolver_downtime(req_id: str, req: DowntimeResolverReq):
+    r = supabase.table("downtime_requests").update({
+        "status": "aprovado" if req.aprovado else "rejeitado",
+        "consequencia_final": req.consequencia_final,
+        "resolvido_em": datetime.utcnow().isoformat(),
+    }).eq("id", req_id).execute()
+    if not r.data:
+        raise HTTPException(404, "Solicitação não encontrada")
+    return {"data": r.data[0]}
+
+
+@app.get("/downtime/resolvidos-nao-vistos/{character_id}")
+def downtime_nao_vistos(character_id: str):
+    r = supabase.table("downtime_requests").select("*") \
+        .eq("character_id", character_id).neq("status", "pendente").eq("visto_jogador", False) \
+        .order("resolvido_em", desc=True).execute()
+    return {"data": r.data}
+
+
+@app.post("/downtime/{req_id}/marcar-visto")
+def marcar_downtime_visto(req_id: str):
+    supabase.table("downtime_requests").update({"visto_jogador": True}).eq("id", req_id).execute()
     return {"ok": True}
 
 # ===================== RODAR =====================
