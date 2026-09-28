@@ -2212,6 +2212,13 @@ async def listar_world_log(campaign_id: str):
     result = supabase.table("world_log").select("*").eq("campaign_id", campaign_id).order("created_at", desc=True).execute()
     return {"success": True, "data": result.data}
 
+@app.delete("/world-log/{log_id}")
+def deletar_world_log(log_id: str):
+    resp = supabase.table("world_log").delete().eq("id", log_id).execute()
+    if not resp.data:
+        raise HTTPException(404, "Registro não encontrado")
+    return {"ok": True}
+
 class FactionRequest(BaseModel):
     campaign_id: str
     description: str
