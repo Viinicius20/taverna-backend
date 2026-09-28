@@ -114,6 +114,20 @@ supabase: Client = create_client(
 
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
+MODELOS_GEMINI = ["gemini-2.5-flash", "gemini-3.6-flash"]
+
+def gerar_com_fallback(contents):
+    ultimo_erro = None
+    for modelo in MODELOS_GEMINI:
+        try:
+            return client.models.generate_content(model=modelo, contents=contents)
+        except ClientError as e:
+            if e.code == 429:  # cota desse modelo esgotada, tenta o próximo
+                ultimo_erro = e
+                continue
+            raise
+    raise ultimo_erro
+
 
 # ===================== MODELOS =====================
 class CreateCharacterRequest(BaseModel):
@@ -282,17 +296,13 @@ async def create_character(request: Request, req: CreateCharacterRequest):
     """
     try:
         print(f"DEBUG 1: Enviando prompt para IA...")
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=[{"role": "user", "parts": [{"text": prompt}]}]
-        )
+        response = gerar_com_fallback([{"role": "user", "parts": [{"text": prompt}]}])
         raw = response.text.strip()
         raw = raw.replace("```json", "").replace("```", "").strip()
         ficha = json.loads(raw)
         print(f"DEBUG 2: IA respondeu: {ficha}")
 
 
-        # Validar e converter classes
         if isinstance(ficha.get("class"), str):
             classes_str = ficha.get("class", "")
             if " / " in classes_str or " e " in classes_str.lower():
@@ -334,15 +344,25 @@ async def create_character(request: Request, req: CreateCharacterRequest):
             detail="IA sobrecarregada, tente novamente em alguns segundos"
         )
 
+    except ClientError as e:
+        if e.code == 429:
+            raise HTTPException(
+                status_code=429,
+                detail="Limite diário de IA atingido. Tente novamente mais tarde."
+            )
+        print(f"ERRO GERAL: {str(e)}")
+        raise HTTPException(500, "Erro ao criar personagem")
+
     except json.JSONDecodeError:
         raise HTTPException(
             status_code=502,
             detail="Erro ao interpretar resposta da IA"
         )
 
+
     except Exception as e:
         print(f"ERRO GERAL: {str(e)}")
-        raise HTTPException(500, "Erro ao processar PDF")
+        raise HTTPException(500, "Erro ao criar personagem")
 
 
 @app.put("/characters/{character_id}")
@@ -402,7 +422,6 @@ Itens mágicos: apropriados pro nível {req.nivel_medio}, criativos e únicos.""
         raise HTTPException(500, {"error": f"Erro ao gerar loot: {str(e)}"})
 
 def gerar_texto_com_gemini(parts_ou_prompt, max_retries=3):
-    """Aceita string simples (prompt) ou lista de parts (multimodal, ex: PDF com imagens)."""
     last_error = None
     contents = parts_ou_prompt if isinstance(parts_ou_prompt, list) else parts_ou_prompt
 
@@ -533,7 +552,6 @@ async def level_up(request: Request, req: LevelUpRequest):
     try:
         ficha_nova = gerar_json_com_gemini(prompt)
 
-        # Preservar campos que a IA pode ignorar
         campos_preservar = [
     "background", "alignment", "background_story", "inventory", "xp", "classes", "name", "race",
     "ideais", "vinculos", "defeitos", "objetivo_atual", "medos", "languages", "appearance"
@@ -542,7 +560,6 @@ async def level_up(request: Request, req: LevelUpRequest):
             if campo in ficha and (campo not in ficha_nova or not ficha_nova[campo]):
                 ficha_nova[campo] = ficha[campo]
 
-        # Preservar arquetipos já resolvidos de outras classes antes de aplicar o novo
         if isinstance(ficha.get("arquetipos"), dict):
             ficha_nova["arquetipos"] = {**ficha["arquetipos"], **ficha_nova.get("arquetipos", {})}
 
@@ -635,7 +652,6 @@ Retorne APENAS o JSON, sem explicações.
         traceback.print_exc()
         raise HTTPException(500, f"Erro ao converter PDF: {str(e)}")
 
-    # Chama Gemini com visão
     try:
         import json
         raw = gerar_texto_com_gemini(parts)
@@ -675,7 +691,6 @@ async def upload_pdf_npc(file: UploadFile = File(...), system: str = "D&D 5e", c
     if not contents:
         raise HTTPException(400, "PDF está vazio ou corrompido")
 
-    # Converte PDF para imagens
     try:
         import fitz
         import base64
@@ -1099,10 +1114,6 @@ async def create_homebrew_spell(req: HombrewSpellRequest):
     """
 
     try:
-        response = client.models.generate_content(
-            model='gemini-2.5-flash',
-            contents=prompt
-        )
         spell_json = gerar_texto_com_gemini(prompt)
         spell_data = json.loads(spell_json.replace("```json", "").replace("```", "").strip())
 
@@ -2093,7 +2104,6 @@ async def encerrar_sessao(req: EncerrarSessaoRequest):
             .execute()
 
         for evento in eventos_ativos.data:
-            # Verifica se o evento foi mencionado nos eventos da sessão
             mencionado = any(
                 evento["name"].lower() in ev["descricao"].lower()
                 for ev in eventos
@@ -2975,13 +2985,9 @@ def avancar_dia(viagem_id: str):
         )
 
         try:
-            resposta = client.models.generate_content(
-                model="gemini-3.6-flash",
-                contents=prompt,
-                config={"temperature": 1.1},
-            )
-            eventos.append({"dia": dia_atual, "descricao": resposta.text.strip(), "resolvido": False})
-        except (ServerError, ClientError):
+            descricao = gerar_texto_com_gemini(prompt).strip()
+            eventos.append({"dia": dia_atual, "descricao": descricao, "resolvido": False})
+        except Exception:
             pass
 
     status = "concluida" if dia_atual >= viagem["tempo_estimado_dias"] else "em_andamento"
