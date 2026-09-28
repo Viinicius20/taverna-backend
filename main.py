@@ -3142,6 +3142,141 @@ def avancar_secret_stage(stage_id: str, req: AvancarSegredoReq):
     supabase.table("npc_secret_stages").update({"nivel_revelado": novo}).eq("id", stage_id).execute()
     return {"nivel_revelado": novo, "message": f"{rotulos[novo]} sobre {req.npc_name}: {texto}"}
 
+class GazetaGerarReq(BaseModel):
+    campaign_id: str
+    nome_jornal: Optional[str] = None
+
+class GazetaEditReq(BaseModel):
+    titulo: Optional[str] = None
+    noticias: Optional[list] = None
+
+
+@app.post("/gazeta/gerar")
+def gerar_gazeta(req: GazetaGerarReq):
+    cid = req.campaign_id
+    partes = []
+
+    eventos = supabase.table("world_events").select("name, description, progress, status") \
+        .eq("campaign_id", cid).execute().data or []
+    ativos = [e for e in eventos if e["status"] == "ativo"]
+    concluidos = [e for e in eventos if e["status"] == "concluido"][-5:]
+    if ativos:
+        partes.append("Eventos em andamento:\n" + "\n".join(
+            f"- {e['name']} ({e.get('progress', 0)}%): {e.get('description') or ''}" for e in ativos))
+    if concluidos:
+        partes.append("Eventos recém-concluídos:\n" + "\n".join(
+            f"- {e['name']}: {e.get('description') or ''}" for e in concluidos))
+
+    log = supabase.table("world_log").select("event_name, description") \
+        .eq("campaign_id", cid).order("created_at", desc=True).limit(8).execute().data or []
+    if log:
+        partes.append("Acontecimentos recentes:\n" + "\n".join(f"- {l['description']}" for l in log))
+
+    regionais = supabase.table("eventos_regionais").select("regiao, tipo_evento, motivo, modificadores") \
+        .eq("campaign_id", cid).eq("ativo", True).execute().data or []
+    if regionais:
+        linhas = []
+        for r in regionais:
+            mods = ", ".join(
+                f"{k} {round((v - 1) * 100):+d}%" for k, v in (r["modificadores"] or {}).items() if v and v != 1
+            )
+            linhas.append(f"- {r['regiao']}: {r['tipo_evento']} ({r['motivo']}). Preços/comércio: {mods or 'sem mudança'}")
+        partes.append("Economia e situação regional:\n" + "\n".join(linhas))
+
+    faccoes = supabase.table("factions").select("name, type, reputation") \
+        .eq("campaign_id", cid).execute().data or []
+    if faccoes:
+        partes.append("Facções: " + "; ".join(f"{f['name']} ({f.get('type') or '?'})" for f in faccoes))
+
+    if not partes:
+        raise HTTPException(400, "Não há nada no mundo pra noticiar ainda.")
+
+    anteriores = supabase.table("gazetas").select("noticias, edicao") \
+        .eq("campaign_id", cid).order("created_at", desc=True).limit(1).execute().data
+    nao_repetir = ""
+    if anteriores:
+        nao_repetir = "Notícias da edição anterior (não repita, só traga desdobramentos):\n" + "\n".join(
+            f"- {n.get('texto', '')}" for n in (anteriores[0]["noticias"] or []))
+
+    nome = req.nome_jornal or "Gazeta do Reino"
+    contexto = "\n\n".join(partes)
+
+    prompt = f"""Você é o redator de "{nome}", um jornal de um mundo de fantasia medieval.
+Com base no estado do mundo abaixo, escreva de 4 a 6 notícias curtas (1-2 frases cada), como leria
+o povo comum: manchetes do dia, boatos, avisos, variações de preço no mercado.
+
+REGRAS:
+- Apenas informação PÚBLICA. Não revele segredos, motivações ocultas nem consequências futuras.
+  Se algo for incerto, escreva como rumor ("dizem que...", "há quem afirme...").
+- Não invente fatos que contradigam o estado do mundo.
+- Preços: use exatamente as variações percentuais informadas.
+- Tom de jornal de época, envolvente, sem listas secas.
+- Escolha um emoji de ícone adequado para cada notícia.
+
+ESTADO DO MUNDO:
+{contexto}
+
+{nao_repetir}
+
+Retorne APENAS um JSON válido:
+{{"titulo": "Manchete principal da edição", "noticias": [{{"icone": "⚔️", "texto": "..."}}]}}"""
+
+    try:
+        raw = gerar_texto_com_gemini(prompt).strip().replace("```json", "").replace("```", "").strip()
+        dados = json.loads(raw)
+    except json.JSONDecodeError:
+        raise HTTPException(502, "A IA não retornou um JSON válido.")
+
+    edicao = (anteriores[0]["edicao"] if anteriores else 0) + 1
+    r = supabase.table("gazetas").insert({
+        "campaign_id": cid,
+        "titulo": dados.get("titulo") or nome,
+        "edicao": edicao,
+        "noticias": dados.get("noticias") or [],
+        "status": "rascunho",
+    }).execute()
+    return {"data": r.data[0]}
+
+
+@app.get("/gazeta/{campaign_id}")
+def listar_gazetas(campaign_id: str):
+    r = supabase.table("gazetas").select("*").eq("campaign_id", campaign_id) \
+        .order("created_at", desc=True).execute()
+    return {"data": r.data}
+
+
+@app.get("/gazeta/{campaign_id}/publicada")
+def gazeta_publicada(campaign_id: str):
+    r = supabase.table("gazetas").select("*").eq("campaign_id", campaign_id) \
+        .eq("status", "publicada").order("published_at", desc=True).limit(1).execute()
+    return {"data": r.data[0] if r.data else None}
+
+
+@app.patch("/gazeta/{gazeta_id}")
+def editar_gazeta(gazeta_id: str, req: GazetaEditReq):
+    campos = {k: v for k, v in req.dict().items() if v is not None}
+    if not campos:
+        raise HTTPException(400, "Nada pra atualizar")
+    r = supabase.table("gazetas").update(campos).eq("id", gazeta_id).execute()
+    return {"data": r.data[0] if r.data else None}
+
+
+@app.post("/gazeta/{gazeta_id}/publicar")
+def publicar_gazeta(gazeta_id: str):
+    r = supabase.table("gazetas").update({
+        "status": "publicada",
+        "published_at": datetime.utcnow().isoformat()
+    }).eq("id", gazeta_id).execute()
+    if not r.data:
+        raise HTTPException(404, "Gazeta não encontrada")
+    return {"data": r.data[0]}
+
+
+@app.delete("/gazeta/{gazeta_id}")
+def deletar_gazeta(gazeta_id: str):
+    supabase.table("gazetas").delete().eq("id", gazeta_id).execute()
+    return {"ok": True}
+
 # ===================== RODAR =====================
 if __name__ == "__main__":
     import uvicorn
