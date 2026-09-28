@@ -2144,15 +2144,15 @@ async def encerrar_sessao(req: EncerrarSessaoRequest):
                         "description": f"Novo evento surgiu como consequência de \"{evento['name']}\": {evento['next_event_name']}."
                     }).execute()
 
-                    if eventos_avancados:
-                        linhas = [f"⏳ {e['name']}: {e['progress_antes']}% → {e['progress_depois']}%" for e in
-                                  eventos_avancados]
-                        conteudo = "🌎 O mundo mudou enquanto vocês estavam ocupados:\n\n" + "\n".join(linhas)
-                        supabase.table("world_changelog").insert({
-                            "campaign_id": req.campaign_id,
-                            "session_number": novo_numero,
-                            "content": conteudo,
-                        }).execute()
+        if eventos_avancados:
+            print(f"[DEBUG] criando changelog com {len(eventos_avancados)} evento(s)")
+            linhas = [f"⏳ {e['name']}: {e['progress_antes']}% → {e['progress_depois']}%" for e in eventos_avancados]
+            conteudo = "🌎 O mundo mudou enquanto vocês estavam ocupados:\n\n" + "\n".join(linhas)
+            supabase.table("world_changelog").insert({
+                "campaign_id": req.campaign_id,
+                "session_number": novo_numero,
+                "content": conteudo,
+            }).execute()
 
     except Exception as log_error:
         print(f"[AVISO] Falha ao processar Mundo Vivo: {log_error}")
