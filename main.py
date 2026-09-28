@@ -1325,6 +1325,11 @@ Retorne APENAS um JSON válido:
     try:
         raw = gerar_texto_com_gemini(prompt).strip().replace("```json", "").replace("```", "").strip()
         return {"success": True, "data": json.loads(raw)}
+    except json.JSONDecodeError:
+        raise HTTPException(400, {"error": "IA não retornou JSON válido"})
+    except Exception as e:
+        print(f"ERRO ENCOUNTER: {e}")
+        raise HTTPException(500, {"error": f"Erro ao gerar encontro: {str(e)}"})
 
 class SecretMessageRequest(BaseModel):
     campaign_id: str
