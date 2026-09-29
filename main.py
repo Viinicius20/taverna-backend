@@ -1493,14 +1493,25 @@ Retorne APENAS um JSON válido:
   "is_homebrew": true
 }}"""
 
+    COLUNAS_BESTIARIO = {
+        "name", "cr", "type", "size", "alignment", "hp", "hp_dice", "ac", "ac_type",
+        "speed", "attributes", "saving_throws", "skills", "damage_resistances",
+        "damage_immunities", "condition_immunities", "senses", "languages",
+        "features", "actions", "bonus_actions", "reactions", "legendary_actions",
+        "description", "is_homebrew",
+    }
+
     try:
         response = client.models.generate_content(
             model="gemini-2.5-flash",
-            contents=[{"role": "user", "parts": [{"text": prompt}]}]
+            contents=[{"role": "user", "parts": [{"text": prompt}]}],
+            config=types.GenerateContentConfig(response_mime_type="application/json"),
         )
-        raw = response.text.strip().replace("```json", "").replace("```", "").strip()
-        monstro = json.loads(raw)
+        monstro = json.loads(response.text)
+        monstro["name"] = nome
+        monstro["description"] = limpar_texto(monstro.get("description"))
         monstro["is_homebrew"] = True
+        monstro = {k: v for k, v in monstro.items() if k in COLUNAS_BESTIARIO}
         result = supabase.table("bestiary").insert(monstro).execute()
         monstro["id"] = result.data[0]["id"] if result.data else None
         return {"success": True, "data": monstro}
