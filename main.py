@@ -26,6 +26,7 @@ from slowapi.errors import RateLimitExceeded
 from fastapi import FastAPI, HTTPException, UploadFile, File, Request, Body, Form
 from pywebpush import webpush, WebPushException
 from datetime import datetime
+from utils import limpar_texto
 
 load_dotenv()
 
@@ -1906,14 +1907,12 @@ async def debug_vapid():
 
 
 @app.get("/bestiary/random-description")
-async def bestiary_random_description():
+def bestiary_random_description():
     try:
-        # Busca todos os monstros
         res = supabase.table("bestiary").select("name, type, cr, description").execute()
         if not res.data:
             raise HTTPException(404, "Nenhum monstro encontrado")
 
-        # Escolhe um aleatório
         monstro = random.choice(res.data)
 
         prompt = f"""Você é um narrador de RPG de fantasia sombria.
@@ -1922,7 +1921,7 @@ Foque na aparência, presença e o que os aventureiros sentem ao se deparar com 
 Não mencione stats ou números. Escreva em português.
 Responda APENAS com a descrição, sem título ou introdução."""
 
-        descricao = gerar_texto_com_gemini(prompt)
+        descricao = limpar_texto(gerar_texto_com_gemini(prompt))
 
         return {
             "success": True,
@@ -1933,6 +1932,8 @@ Responda APENAS com a descrição, sem título ou introdução."""
                 "descricao": descricao
             }
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(500, f"Erro ao gerar descrição: {str(e)}")
 
