@@ -2,6 +2,9 @@
 .env
 .env.*
 !.env.example
+*.pem
+render_key.txt
+gerar_keys*.py
 
 # python
 __pycache__/
@@ -9,6 +12,3 @@ __pycache__/
 .venv/
 venv/
 .pytest_cache/
-*.pem
-render_key.txt
-gerar_keys*.py
