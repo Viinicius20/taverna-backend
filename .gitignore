@@ -9,3 +9,6 @@ __pycache__/
 .venv/
 venv/
 .pytest_cache/
+*.pem
+render_key.txt
+gerar_keys*.py
