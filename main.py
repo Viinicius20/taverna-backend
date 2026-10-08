@@ -48,6 +48,14 @@ TONS = ["cômico", "sinistro", "exagerado", "meia-verdade duvidosa", "sussurrado
 NARRADORES = ["um bêbado", "uma cozinheira", "um mercador", "uma criança",
               "um guarda aposentado", "um bardo", "uma lavadeira"]
 
+HUMOR_DESC = {
+    "neutro": "calmo, sem inclinação especial em relação aos jogadores",
+    "hostil": "hostil, desconfiado e propenso a agressão",
+    "assustado": "com medo, evasivo e propenso a ceder ou fugir",
+    "amigavel": "amigável, aberto e disposto a ajudar",
+    "manipulador": "manipulador, charmoso na superfície mas sempre atrás de vantagem",
+    }
+
 VAPID_PRIVATE_KEY = os.getenv("VAPID_PRIVATE_KEY")
 VAPID_PUBLIC_KEY = os.getenv("VAPID_PUBLIC_KEY")
 VAPID_CLAIMS = {"sub": "mailto:viniciusamoury0403@gmail.com"}
@@ -2411,17 +2419,20 @@ async def adicionar_memoria_npc(req: MemoriaNpcRequest):
 class SugestaoNpcRequest(BaseModel):
     npc_id: str
     situacao_atual: str = ""
+    mood: str = "neutro"
 
 @app.post("/npcs/sugerir-acao")
 async def sugerir_acao_npc(req: SugestaoNpcRequest):
-    result = supabase.table("npcs").select("*").eq("id", req.npc_id).single().execute()
-    npc = result.data
-    if not npc:
+    mood = HUMOR_DESC.get(req.mood, HUMOR_DESC["neutro"])
+    result = supabase.table("npcs").select("*").eq("id", req.npc_id).limit(1).execute()
+    if not result.data:
         raise HTTPException(404, "NPC não encontrado")
+    npc = result.data[0]
 
     d = npc.get("data", {}) or {}
     memoria = d.get("memoria", [])
     memoria_texto = "\n".join([f"- {m['evento']}" for m in memoria]) or "Nenhum evento registrado ainda."
+    mood = HUMOR_DESC.get(mood_recebido, HUMOR_DESC["neutro"])
 
     prompt = f"""
     Você é um mestre de RPG interpretando um NPC.
@@ -2429,14 +2440,17 @@ async def sugerir_acao_npc(req: SugestaoNpcRequest):
     Nome: {d.get('name', npc.get('name'))}
     Personalidade: {d.get('personality', 'não definida')}
     Motivação: {d.get('motivation', 'não definida')}
+    Estado emocional atual: {mood}
 
     Histórico de interações com os jogadores:
     {memoria_texto}
 
     Situação atual: {req.situacao_atual or "Os jogadores acabam de encontrar este NPC novamente."}
 
-    Baseado na personalidade e no histórico acima, sugira como esse NPC reagiria 
-    agora — o que ele diria ou faria. Seja específico e consistente com o que já aconteceu.
+    Baseado na personalidade, no histórico acima e principalmente no estado emocional atual,
+    sugira como esse NPC reagiria agora: o que ele diria ou faria. O estado emocional tem
+    prioridade: se o histórico mostra gentileza mas o estado é hostil, o NPC reage com hostilidade.
+    Seja específico e consistente com o que já aconteceu.
     Responda em 2-4 frases, em tom narrativo, pronto para o mestre usar na mesa.
     """
     try:
