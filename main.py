@@ -3576,6 +3576,53 @@ def deletar_fato(fato_id: str):
     supabase.table("fatos_mundo").delete().eq("id", fato_id).execute()
     return {"ok": True}
 
+class MisterioNovo(BaseModel):
+    title: str
+    description: str = ""
+    clues_total: int = 5
+
+class MisterioPistas(BaseModel):
+    clues_found: int
+
+@app.get("/misterios")
+def listar_misterios():
+    res = supabase.table("mysteries").select("*") \
+        .eq("campaign_id", CAMPANHA_ID).order("created_at", desc=True).execute()
+    return {"success": True, "data": res.data or []}
+
+@app.post("/misterios")
+def criar_misterio(body: MisterioNovo):
+    titulo = body.title.strip()
+    if not titulo:
+        raise HTTPException(400, "Título obrigatório")
+    res = supabase.table("mysteries").insert({
+        "campaign_id": CAMPANHA_ID,
+        "title": titulo[:200],
+        "description": body.description.strip()[:2000],
+        "clues_total": max(1, min(body.clues_total, 50)),
+    }).execute()
+    return {"success": True, "data": res.data[0]}
+
+@app.put("/misterios/{misterio_id}/pistas")
+def atualizar_pistas(misterio_id: str, body: MisterioPistas):
+    atual = supabase.table("mysteries").select("clues_total") \
+        .eq("id", misterio_id).eq("campaign_id", CAMPANHA_ID).limit(1).execute()
+    if not atual.data:
+        raise HTTPException(404, "Mistério não encontrado")
+    total = atual.data[0]["clues_total"]
+    found = max(0, min(body.clues_found, total))   # nunca passa do total nem fica negativo
+    res = supabase.table("mysteries").update({
+        "clues_found": found,
+        "status": "resolvido" if found >= total else "aberto",
+    }).eq("id", misterio_id).eq("campaign_id", CAMPANHA_ID).execute()
+    return {"success": True, "data": res.data[0]}
+
+@app.delete("/misterios/{misterio_id}")
+def deletar_misterio(misterio_id: str):
+    supabase.table("mysteries").delete() \
+        .eq("id", misterio_id).eq("campaign_id", CAMPANHA_ID).execute()
+    return {"success": True}
+
 # ===================== RODAR =====================
 if __name__ == "__main__":
     import uvicorn
