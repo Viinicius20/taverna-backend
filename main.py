@@ -3580,13 +3580,15 @@ class MisterioNovo(BaseModel):
     title: str
     description: str = ""
     clues_total: int = 5
+    npc_id: str | None = None
+    location_id: str | None = None
 
 class MisterioPistas(BaseModel):
     clues_found: int
 
 @app.get("/misterios")
 def listar_misterios():
-    res = supabase.table("mysteries").select("*") \
+    res = supabase.table("mysteries").select("*, npcs(name), locations(name)") \
         .eq("campaign_id", CAMPANHA_ID).order("created_at", desc=True).execute()
     return {"success": True, "data": res.data or []}
 
@@ -3600,6 +3602,8 @@ def criar_misterio(body: MisterioNovo):
         "title": titulo[:200],
         "description": body.description.strip()[:2000],
         "clues_total": max(1, min(body.clues_total, 50)),
+        "npc_id": body.npc_id or None,
+        "location_id": body.location_id or None,
     }).execute()
     return {"success": True, "data": res.data[0]}
 
@@ -3610,7 +3614,7 @@ def atualizar_pistas(misterio_id: str, body: MisterioPistas):
     if not atual.data:
         raise HTTPException(404, "Mistério não encontrado")
     total = atual.data[0]["clues_total"]
-    found = max(0, min(body.clues_found, total))   # nunca passa do total nem fica negativo
+    found = max(0, min(body.clues_found, total))
     res = supabase.table("mysteries").update({
         "clues_found": found,
         "status": "resolvido" if found >= total else "aberto",
