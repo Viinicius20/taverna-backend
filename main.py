@@ -55,10 +55,12 @@ NARRADORES = ["um bêbado", "uma cozinheira", "um mercador", "uma criança",
 
 HUMOR_DESC = {
     "neutro": "calmo, sem inclinação especial em relação aos jogadores",
-    "hostil": "hostil, desconfiado e propenso a agressão",
+    "hostil": "irritado, impaciente e de pavio curto, responde seco e se incomoda fácil",
     "assustado": "com medo, evasivo e propenso a ceder ou fugir",
-    "amigavel": "amigável, aberto e disposto a ajudar",
+    "amigavel": "animado, entusiasmado e falante, de bom humor e disposto a conversar",
     "manipulador": "manipulador, charmoso na superfície mas sempre atrás de vantagem",
+    "triste": "abatido e melancólico, fala pouco, com a voz carregada de pesar",
+    "curioso": "interessado e inquisitivo, faz perguntas e quer saber mais",
     }
 
 VAPID_PRIVATE_KEY = os.getenv("VAPID_PRIVATE_KEY")
