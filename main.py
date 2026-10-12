@@ -37,6 +37,11 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 VELOCIDADE_KM_DIA = 40
 CHANCE_EVENTO_POR_DIA = 0.35
 
+LIMIAR = 50     # a partir daqui o estado muda (aliada / hostil)
+MAXIMO = 100    # teto e piso do placar
+
+REPUTACOES = {"aliada", "neutra", "hostil"}
+
 ATIVIDADES_DOWNTIME = ["treinar", "trabalhar", "pesquisar", "viajar", "fabricar item", "investigar", "socializar", "descansar"]
 
 TEMAS = [
@@ -2769,12 +2774,83 @@ async def toggle_descoberto(id: str, data: dict = Body(...)):
         raise HTTPException(500, f"Erro ao atualizar bestiário: {str(e)}")
 
 
+def estado_por_pontos(pontos: int) -> str:
+    if pontos >= LIMIAR:
+        return "aliada"
+    if pontos <= -LIMIAR:
+        return "hostil"
+    return "neutra"
+
+
+def delta_do_evento(valor) -> int:
+    """Aceita número ('20', '-30') e, por compatibilidade, os valores antigos."""
+    v = str(valor or "").strip().lower()
+    antigos = {"aliada": LIMIAR, "hostil": -LIMIAR, "neutra": 0}
+    if v in antigos:
+        return antigos[v]
+    try:
+        return max(-MAXIMO, min(MAXIMO, int(v)))
+    except ValueError:
+        return 0
+
+
+def ajustar_reputacao(tipo: str, entidade_id: str, delta: int, motivo: str, origem: str = "manual") -> dict:
+    tabela, coluna = ("factions", "reputation_score") if tipo == "faction" else ("npcs", "relation_score")
+    atual = supabase.table(tabela).select(coluna).eq("id", entidade_id).limit(1).execute()
+    if not atual.data:
+        raise HTTPException(404, "Não encontrado")
+    antes = atual.data[0].get(coluna) or 0
+    depois = max(-MAXIMO, min(MAXIMO, antes + delta))
+    if depois != antes:
+        dados = {coluna: depois}
+        if tipo == "faction":
+            dados["reputation"] = estado_por_pontos(depois)   # o que já lê esse campo continua funcionando
+        supabase.table(tabela).update(dados).eq("id", entidade_id).execute()
+        supabase.table("reputation_log").insert({
+            "campaign_id": CAMPANHA_ID, "entity_type": tipo, "entity_id": entidade_id,
+            "delta": depois - antes, "score_after": depois,
+            "reason": motivo[:300], "source": origem,
+        }).execute()
+    return {"pontos": depois, "estado": estado_por_pontos(depois)}
+
+
+class AjusteReputacao(BaseModel):
+    delta: int
+    reason: str
+
+
+@app.post("/reputation/{tipo}/{entidade_id}")
+def mudar_reputacao(tipo: str, entidade_id: str, body: AjusteReputacao):
+    if tipo not in ("faction", "npc"):
+        raise HTTPException(400, "Tipo inválido")
+    if body.delta == 0 or abs(body.delta) > MAXIMO:
+        raise HTTPException(400, f"Pontos devem ficar entre -{MAXIMO} e {MAXIMO} (e não zero)")
+    motivo = body.reason.strip()
+    if not motivo:
+        raise HTTPException(400, "Informe o motivo")
+    return {"success": True, "data": ajustar_reputacao(tipo, entidade_id, body.delta, motivo)}
+
+
+@app.get("/reputation/{tipo}/{entidade_id}/log")
+def historico_reputacao(tipo: str, entidade_id: str):
+    if tipo not in ("faction", "npc"):
+        raise HTTPException(400, "Tipo inválido")
+    res = supabase.table("reputation_log") \
+        .select("id, delta, score_after, reason, source, created_at") \
+        .eq("entity_type", tipo).eq("entity_id", entidade_id) \
+        .order("created_at", desc=True).limit(30).execute()
+    return {"success": True, "data": res.data or []}
+
 def propagar_consequencias_evento(evento, campaign_id):
     try:
         if evento.get("affects_faction_id") and evento.get("faction_reputation_change"):
-            supabase.table("factions").update({
-                "reputation": evento["faction_reputation_change"]
-            }).eq("id", evento["affects_faction_id"]).execute()
+            d = delta_do_evento(evento["faction_reputation_change"])
+            if d:
+                try:
+                    ajustar_reputacao("faction", evento["affects_faction_id"], d,
+                                      f"Evento: {evento['name']}", "evento")
+                except Exception as e:
+                    print(f"[AVISO] Falha ao ajustar reputação: {e}")
 
         if evento.get("sets_flag_key"):
             flag_key = evento["sets_flag_key"]
@@ -2794,13 +2870,20 @@ def propagar_consequencias_evento(evento, campaign_id):
 
 
 @app.patch("/world-events/{event_id}")
-async def atualizar_evento_mundo(event_id: str, req: UpdateWorldEventRequest):
+def atualizar_evento_mundo(event_id: str, req: UpdateWorldEventRequest):
     updates = {k: v for k, v in req.dict().items() if v is not None}
+    if not updates:
+        return {"success": True}
+
+    antes = supabase.table("world_events").select("progress, status").eq("id", event_id).limit(1).execute()
+    if not antes.data:
+        raise HTTPException(404, "Evento não encontrado")
+    ja_concluido = (antes.data[0].get("progress") or 0) >= 100
 
     result = supabase.table("world_events").update(updates).eq("id", event_id).execute()
     evento_atualizado = result.data[0] if result.data else None
 
-    if evento_atualizado and evento_atualizado.get("progress", 0) >= 100:
+    if evento_atualizado and (evento_atualizado.get("progress") or 0) >= 100 and not ja_concluido:
         propagar_consequencias_evento(evento_atualizado, evento_atualizado["campaign_id"])
 
         # Se tem um próximo evento configurado, dispara a cadeia
@@ -3626,6 +3709,45 @@ def deletar_misterio(misterio_id: str):
     supabase.table("mysteries").delete() \
         .eq("id", misterio_id).eq("campaign_id", CAMPANHA_ID).execute()
     return {"success": True}
+
+class ReputacaoRequest(BaseModel):
+    reputation: str
+    reason: str
+
+def registrar_reputacao(faction_id: str, nova: str, motivo: str, origem: str = "manual"):
+    """Atualiza a reputação e grava o motivo. Reutilizável por outros endpoints (ex.: eventos do mundo)."""
+    atual = supabase.table("factions").select("reputation").eq("id", faction_id).limit(1).execute()
+    if not atual.data:
+        raise HTTPException(404, "Facção não encontrada")
+    anterior = atual.data[0].get("reputation") or "neutra"
+    if anterior == nova:
+        return
+    supabase.table("factions").update({"reputation": nova}).eq("id", faction_id).execute()
+    supabase.table("faction_reputation_log").insert({
+        "campaign_id": CAMPANHA_ID,
+        "faction_id": faction_id,
+        "from_rep": anterior,
+        "to_rep": nova,
+        "reason": motivo[:300],
+        "source": origem,
+    }).execute()
+
+@app.post("/factions/{faction_id}/reputation")
+def mudar_reputacao(faction_id: str, body: ReputacaoRequest):
+    if body.reputation not in REPUTACOES:
+        raise HTTPException(400, "Reputação inválida")
+    motivo = body.reason.strip()
+    if not motivo:
+        raise HTTPException(400, "Informe o motivo")
+    registrar_reputacao(faction_id, body.reputation, motivo)
+    return {"success": True}
+
+@app.get("/factions/{faction_id}/reputation-log")
+def historico_reputacao(faction_id: str):
+    res = supabase.table("faction_reputation_log") \
+        .select("id, from_rep, to_rep, reason, source, created_at") \
+        .eq("faction_id", faction_id).order("created_at", desc=True).limit(30).execute()
+    return {"success": True, "data": res.data or []}
 
 # ===================== RODAR =====================
 if __name__ == "__main__":
