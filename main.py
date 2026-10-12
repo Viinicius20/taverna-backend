@@ -2841,6 +2841,13 @@ def historico_reputacao(tipo: str, entidade_id: str):
         .order("created_at", desc=True).limit(30).execute()
     return {"success": True, "data": res.data or []}
 
+@app.delete("/reputation/log/{log_id}")
+def deletar_log_reputacao(log_id: str):
+    res = supabase.table("reputation_log").delete().eq("id", log_id).execute()
+    if not res.data:
+        raise HTTPException(404, "Registro não encontrado")
+    return {"success": True}
+
 def propagar_consequencias_evento(evento, campaign_id):
     try:
         if evento.get("affects_faction_id") and evento.get("faction_reputation_change"):
