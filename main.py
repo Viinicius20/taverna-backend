@@ -63,6 +63,17 @@ HUMOR_DESC = {
     "curioso": "interessado e inquisitivo, faz perguntas e quer saber mais",
     }
 
+INSTRUCAO_DOC = {
+    "carta": "uma carta pessoal, com saudação e assinatura",
+    "bilhete": "um bilhete curto e apressado",
+    "pergaminho": "um pergaminho antigo, em linguagem arcaica",
+    "mapa de tesouro": "a descrição escrita de um mapa de tesouro, com marcos e direções",
+    "convite": "um convite formal, com local e ocasião",
+    "ameaca": "uma ameaça escrita que deixe o leitor desconfortável sem ser explícita demais",
+    "contrato": "um contrato com partes, cláusulas numeradas, pagamento e consequências por descumprimento",
+    "ordem": "uma ordem oficial de uma facção, com tom de autoridade e prazo",
+}
+
 VAPID_PRIVATE_KEY = os.getenv("VAPID_PRIVATE_KEY")
 VAPID_PUBLIC_KEY = os.getenv("VAPID_PUBLIC_KEY")
 VAPID_CLAIMS = {"sub": "mailto:viniciusamoury0403@gmail.com"}
@@ -2618,28 +2629,37 @@ async def deletar_local(location_id: str):
 class HandoutRequest(BaseModel):
     campaign_id: str
     descricao: str
-    tipo_documento: str = "carta"  # carta, bilhete, pergaminho, mapa de tesouro, etc
+    tipo_documento: str = "carta"
+    remetente: str = ""
+
 
 @app.post("/gallery/gerar-handout")
-async def gerar_handout(req: HandoutRequest):
+def gerar_handout(req: HandoutRequest):   # def: as chamadas ao Supabase e ao Gemini são bloqueantes
+    tipo = req.tipo_documento if req.tipo_documento in INSTRUCAO_DOC else "carta"
+    descricao = req.descricao.strip()[:1000]
+    remetente = req.remetente.strip()[:80]
+    if not descricao:
+        raise HTTPException(400, "Descreva o documento")
+
     prompt = f"""
     Você é um mestre de RPG criando um documento/handout para os jogadores encontrarem.
-    Tipo: {req.tipo_documento}
-    Contexto: {req.descricao}
+    Tipo: {tipo} ({INSTRUCAO_DOC[tipo]})
+    Remetente: {remetente or "não especificado"}
+    Contexto: {descricao}
 
-    Escreva o conteúdo completo do documento como ele apareceria fisicamente 
-    (texto da carta, bilhete, pergaminho, etc), em tom apropriado ao contexto.
+    Escreva o conteúdo completo do documento como ele apareceria fisicamente,
+    em tom apropriado ao tipo e ao contexto. Se houver remetente, o documento
+    deve ser escrito por ele ou em nome dele.
     Responda APENAS com o texto do documento, sem explicações externas.
     """
     try:
-        conteudo = gerar_texto_com_gemini(prompt)
-        conteudo = conteudo.strip()
+        conteudo = gerar_texto_com_gemini(prompt).strip()
 
         result = supabase.table("gallery").insert({
             "campaign_id": req.campaign_id,
-            "name": f"{req.tipo_documento.capitalize()} - {req.descricao[:40]}",
+            "name": f"{tipo.capitalize()} - {descricao[:40]}",
             "type": "handout",
-            "category": req.tipo_documento,
+            "category": tipo,
             "text_content": conteudo,
             "revealed": False
         }).execute()
