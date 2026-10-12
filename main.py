@@ -2670,6 +2670,55 @@ def gerar_handout(req: HandoutRequest):   # def: as chamadas ao Supabase e ao Ge
         traceback.print_exc()
         raise HTTPException(500, f"Erro ao gerar handout: {str(e)}")
 
+class EnviarHandoutRequest(BaseModel):
+    todos: bool = False
+    character_ids: list[str] = []
+
+
+@app.post("/gallery/{handout_id}/enviar")
+def enviar_handout(handout_id: str, body: EnviarHandoutRequest):
+    h = supabase.table("gallery").select("id, name, type").eq("id", handout_id).limit(1).execute()
+    if not h.data or h.data[0].get("type") != "handout":
+        raise HTTPException(404, "Handout não encontrado")
+
+    if body.todos:
+        supabase.table("gallery").update({"revealed": True}).eq("id", handout_id).execute()
+        destinatarios = [c["id"] for c in (supabase.table("characters").select("id").execute().data or [])]
+    else:
+        ids = list(dict.fromkeys(body.character_ids))[:50]   # sem repetidos, no máximo 50
+        if not ids:
+            raise HTTPException(400, "Escolha ao menos um destinatário")
+        validos = supabase.table("characters").select("id").in_("id", ids).execute().data or []
+        destinatarios = [c["id"] for c in validos]
+        if not destinatarios:
+            raise HTTPException(400, "Nenhum destinatário válido")
+        supabase.table("handout_recipients").upsert(
+            [{"handout_id": handout_id, "character_id": cid} for cid in destinatarios]
+        ).execute()
+
+    for cid in destinatarios:
+        try:
+            pass   # troque pela função que dispara o push dos Sussurros, ex.: avisar_push(cid, "Novo documento", h.data[0]["name"])
+        except Exception as e:
+            print(f"[AVISO] Falha no push: {e}")
+
+    return {"success": True, "enviados": len(destinatarios)}
+
+
+@app.get("/gallery/handouts-para/{character_id}")
+def handouts_do_personagem(character_id: str):
+    publicos = supabase.table("gallery").select("*") \
+        .eq("campaign_id", CAMPANHA_ID).eq("type", "handout").eq("revealed", True).execute().data or []
+    diretos = supabase.table("handout_recipients").select("gallery(*)") \
+        .eq("character_id", character_id).execute().data or []
+    vistos = {h["id"]: h for h in publicos}
+    for r in diretos:
+        g = r.get("gallery")
+        if g:
+            vistos.setdefault(g["id"], g)
+    lista = sorted(vistos.values(), key=lambda h: h.get("created_at") or "", reverse=True)
+    return {"success": True, "data": lista}
+
 class WorldEventRequest(BaseModel):
     campaign_id: str
     name: str
