@@ -27,6 +27,7 @@ from fastapi import FastAPI, HTTPException, UploadFile, File, Request, Body, For
 from pywebpush import webpush, WebPushException
 from datetime import datetime
 from utils import limpar_texto
+from utils import estado_por_pontos, delta_do_evento, LIMIAR, MAXIMO
 
 load_dotenv()
 
@@ -37,8 +38,6 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 VELOCIDADE_KM_DIA = 40
 CHANCE_EVENTO_POR_DIA = 0.35
 
-LIMIAR = 50     # a partir daqui o estado muda (aliada / hostil)
-MAXIMO = 100    # teto e piso do placar
 
 REPUTACOES = {"aliada", "neutra", "hostil"}
 
@@ -2859,25 +2858,6 @@ async def toggle_descoberto(id: str, data: dict = Body(...)):
     except Exception as e:
         raise HTTPException(500, f"Erro ao atualizar bestiário: {str(e)}")
 
-
-def estado_por_pontos(pontos: int) -> str:
-    if pontos >= LIMIAR:
-        return "aliada"
-    if pontos <= -LIMIAR:
-        return "hostil"
-    return "neutra"
-
-
-def delta_do_evento(valor) -> int:
-    """Aceita número ('20', '-30') e, por compatibilidade, os valores antigos."""
-    v = str(valor or "").strip().lower()
-    antigos = {"aliada": LIMIAR, "hostil": -LIMIAR, "neutra": 0}
-    if v in antigos:
-        return antigos[v]
-    try:
-        return max(-MAXIMO, min(MAXIMO, int(v)))
-    except ValueError:
-        return 0
 
 
 def ajustar_reputacao(tipo: str, entidade_id: str, delta: int, motivo: str, origem: str = "manual") -> dict:

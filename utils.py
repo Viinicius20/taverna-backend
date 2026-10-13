@@ -18,3 +18,23 @@ def limpar_texto(valor):
             break
         texto = obj.strip()
     return texto.strip('"“”').strip()
+
+LIMIAR = 50
+MAXIMO = 100
+
+def estado_por_pontos(pontos: int) -> str:
+    if pontos >= LIMIAR:
+        return "aliada"
+    if pontos <= -LIMIAR:
+        return "hostil"
+    return "neutra"
+
+def delta_do_evento(valor) -> int:
+    v = str(valor or "").strip().lower()
+    antigos = {"aliada": LIMIAR, "hostil": -LIMIAR, "neutra": 0}
+    if v in antigos:
+        return antigos[v]
+    try:
+        return max(-MAXIMO, min(MAXIMO, int(v)))
+    except ValueError:
+        return 0
