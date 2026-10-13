@@ -2655,6 +2655,13 @@ def gerar_handout(req: HandoutRequest):   # def: as chamadas ao Supabase e ao Ge
     try:
         conteudo = gerar_texto_com_gemini(prompt).strip()
 
+        if conteudo.startswith('"') and conteudo.endswith('"'):
+            try:
+                conteudo = json.loads(conteudo)
+            except Exception:
+                conteudo = conteudo.strip('"')
+        conteudo = conteudo.replace("\\n", "\n")
+
         result = supabase.table("gallery").insert({
             "campaign_id": req.campaign_id,
             "name": f"{tipo.capitalize()} - {descricao[:40]}",
@@ -2676,16 +2683,16 @@ class EnviarHandoutRequest(BaseModel):
 
 
 @app.post("/gallery/{handout_id}/enviar")
-def enviar_handout(handout_id: str, body: EnviarHandoutRequest):
+async def enviar_handout(handout_id: str, body: EnviarHandoutRequest):
     h = supabase.table("gallery").select("id, name, type").eq("id", handout_id).limit(1).execute()
     if not h.data or h.data[0].get("type") != "handout":
         raise HTTPException(404, "Handout não encontrado")
 
     if body.todos:
         supabase.table("gallery").update({"revealed": True}).eq("id", handout_id).execute()
-        destinatarios = [c["id"] for c in (supabase.table("characters").select("id").execute().data or [])]
+        destinatarios = [c["id"] for c in (supabase.table("characters").select("id").eq("campaign_id", CAMPANHA_ID).execute().data or [])]
     else:
-        ids = list(dict.fromkeys(body.character_ids))[:50]   # sem repetidos, no máximo 50
+        ids = list(dict.fromkeys(body.character_ids))[:50]
         if not ids:
             raise HTTPException(400, "Escolha ao menos um destinatário")
         validos = supabase.table("characters").select("id").in_("id", ids).execute().data or []
@@ -2696,13 +2703,21 @@ def enviar_handout(handout_id: str, body: EnviarHandoutRequest):
             [{"handout_id": handout_id, "character_id": cid} for cid in destinatarios]
         ).execute()
 
+    nome = h.data[0]["name"]
     for cid in destinatarios:
         try:
-            pass   # troque pela função que dispara o push dos Sussurros, ex.: avisar_push(cid, "Novo documento", h.data[0]["name"])
-        except Exception as e:
-            print(f"[AVISO] Falha no push: {e}")
+            supabase.table("secret_messages").insert({
+                "campaign_id": CAMPANHA_ID,
+                "character_id": cid,
+                "message": f"📜 Você recebeu um documento: {nome}. Veja na aba Documentos da sua ficha.",
+                "lida": False,
+            }).execute()
 
-    return {"success": True, "enviados": len(destinatarios)}
+            char_res = supabase.table("characters").select("user_id").eq("id", cid).single().execute()
+            if char_res.data and char_res.data.get("user_id"):
+                await enviar_push_notification(char_res.data["user_id"], "📜 Novo documento", nome)
+        except Exception as e:
+            print(f"[AVISO] Falha ao avisar: {e}")
 
 
 @app.get("/gallery/handouts-para/{character_id}")
