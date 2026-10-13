@@ -73,6 +73,8 @@ INSTRUCAO_DOC = {
     "ordem": "uma ordem oficial de uma facção, com tom de autoridade e prazo",
 }
 
+CORES_NOTA = {"amarelo", "rosa", "azul", "verde"}
+
 VAPID_PRIVATE_KEY = os.getenv("VAPID_PRIVATE_KEY")
 VAPID_PUBLIC_KEY = os.getenv("VAPID_PUBLIC_KEY")
 VAPID_CLAIMS = {"sub": "mailto:viniciusamoury0403@gmail.com"}
@@ -3821,6 +3823,73 @@ def historico_reputacao(faction_id: str):
         .select("id, from_rep, to_rep, reason, source, created_at") \
         .eq("faction_id", faction_id).order("created_at", desc=True).limit(30).execute()
     return {"success": True, "data": res.data or []}
+
+class NotaNova(BaseModel):
+    text: str
+    color: str = "amarelo"
+    sessions_left: int | None = None
+
+
+class NotaEdit(BaseModel):
+    done: bool | None = None
+    text: str | None = None
+    color: str | None = None
+
+
+@app.get("/notas-sessao")
+def listar_notas():
+    res = supabase.table("session_notes").select("*") \
+        .eq("campaign_id", CAMPANHA_ID).eq("done", False) \
+        .order("created_at").execute()
+    return {"success": True, "data": res.data or []}
+
+
+@app.post("/notas-sessao")
+def criar_nota(body: NotaNova):
+    texto = body.text.strip()
+    if not texto:
+        raise HTTPException(400, "Escreva a anotação")
+    cor = body.color if body.color in CORES_NOTA else "amarelo"
+    sessoes = None if body.sessions_left is None else max(0, min(body.sessions_left, 99))
+    res = supabase.table("session_notes").insert({
+        "campaign_id": CAMPANHA_ID, "text": texto[:300], "color": cor, "sessions_left": sessoes,
+    }).execute()
+    return {"success": True, "data": res.data[0]}
+
+
+@app.patch("/notas-sessao/{nota_id}")
+def editar_nota(nota_id: str, body: NotaEdit):
+    updates = {}
+    if body.done is not None:
+        updates["done"] = body.done
+    if body.text is not None:
+        t = body.text.strip()
+        if not t:
+            raise HTTPException(400, "Texto vazio")
+        updates["text"] = t[:300]
+    if body.color is not None and body.color in CORES_NOTA:
+        updates["color"] = body.color
+    if updates:
+        supabase.table("session_notes").update(updates) \
+            .eq("id", nota_id).eq("campaign_id", CAMPANHA_ID).execute()
+    return {"success": True}
+
+
+@app.delete("/notas-sessao/{nota_id}")
+def apagar_nota(nota_id: str):
+    supabase.table("session_notes").delete() \
+        .eq("id", nota_id).eq("campaign_id", CAMPANHA_ID).execute()
+    return {"success": True}
+
+
+@app.post("/notas-sessao/encerrar-sessao")
+def encerrar_sessao():
+    res = supabase.table("session_notes").select("id, sessions_left") \
+        .eq("campaign_id", CAMPANHA_ID).eq("done", False).gt("sessions_left", 0).execute()
+    for n in res.data or []:
+        supabase.table("session_notes").update({"sessions_left": n["sessions_left"] - 1}) \
+            .eq("id", n["id"]).execute()
+    return {"success": True, "atualizadas": len(res.data or [])}
 
 # ===================== RODAR =====================
 if __name__ == "__main__":
