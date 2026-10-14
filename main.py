@@ -2414,6 +2414,44 @@ async def gerar_consequencia(req: ConsequenciaRequest):
     except Exception as e:
         raise HTTPException(500, f"Erro ao gerar consequência: {str(e)}")
 
+class ConsequenciaSugerirReq(BaseModel):
+    gatilho: str
+
+
+@app.post("/consequencias/sugerir")
+def sugerir_consequencias(req: ConsequenciaSugerirReq):
+    prompt = f"""Você é um mestre de D&D 5e criando ganchos narrativos de longo prazo.
+Ação dos jogadores: "{req.gatilho}"
+
+Proponha exatamente 3 consequências ocultas DIFERENTES entre si, que só serão reveladas mais tarde, nesta ordem:
+1) uma social ou política (reputação, alianças, facções, poder);
+2) uma misteriosa ou sobrenatural (algo escondido que reage à ação);
+3) uma pessoal ou material (alguém próximo, um item, uma perda ou dívida).
+
+Cada uma com 1-2 frases, ligada de forma causal à ação, e impossível de os jogadores preverem.
+Retorne APENAS um JSON válido: um array com 3 strings. Sem markdown."""
+
+    texto = gerar_texto_com_gemini(prompt).strip().replace("```json", "").replace("```", "").strip()
+
+    opcoes = None
+    try:
+        parsed = json.loads(texto)
+        if isinstance(parsed, list):
+            opcoes = [str(x).strip() for x in parsed if str(x).strip()]
+    except Exception:
+        pass
+
+    if not opcoes:
+        opcoes = [
+            l.strip().strip('[]",\'-•* ').lstrip("0123456789.) ").strip()
+            for l in texto.split("\n")
+            if l.strip() and l.strip() not in ("[", "]")
+        ]
+
+    if len(opcoes) < 3:
+        raise HTTPException(502, "A IA não retornou as 3 opções.")
+    return {"data": opcoes[:3]}
+
 
 class MemoriaNpcRequest(BaseModel):
     npc_id: str
