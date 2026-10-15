@@ -4125,6 +4125,13 @@ def deletar_pagina_wiki(wiki_id: str):
     supabase.table("wiki_paginas").delete().eq("id", wiki_id).execute()
     return {"ok": True}
 
+@app.get("/world-changelog/{campaign_id}/nao-lido-mestre")
+def changelog_nao_lido_mestre(campaign_id: str):
+    r = supabase.table("world_changelog").select("*") \
+        .eq("campaign_id", campaign_id).eq("visto_mestre", False) \
+        .order("created_at", desc=True).limit(10).execute()
+    return {"data": r.data}
+
 # ===================== RODAR =====================
 if __name__ == "__main__":
     import uvicorn
