@@ -1,0 +1,8 @@
+[33mcommit 92e1a58a910848f46f2f06d0987d9938b177785d[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m)[m
+Author: Viinicius20 <viniciusamoury0403@gmail.com>
+Date:   Wed Oct 14 19:11:31 2026 -0300
+
+    feat: sugestao de 3 consequencias (E se?) para acoes dos jogadores
+
+ main.py | 38 [32m++++++++++++++++++++++++++++++++++++++[m
+ 1 file changed, 38 insertions(+)

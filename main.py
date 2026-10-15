@@ -1663,18 +1663,22 @@ async def hide_image(image_id: str):
 
 
 @app.delete("/gallery/{image_id}")
-async def delete_gallery_image(image_id: str):
+def delete_gallery_image(image_id: str):
     try:
-        res = supabase.table("gallery").select("*").eq("id", image_id).single().execute()
-        image = res.data
+        res = supabase.table("gallery").select("*").eq("id", image_id).limit(1).execute()
+        if not res.data:
+            raise HTTPException(404, "Imagem não encontrada")
+        image = res.data[0]
 
-        # Só tenta deletar do storage se realmente tiver uma URL de imagem
-        if image and image.get("url"):
+        if image.get("url"):
             filename = image["url"].split("/")[-1]
             supabase.storage.from_("gallery").remove([filename])
 
+        supabase.table("map_tokens").delete().eq("map_id", image_id).execute()
         supabase.table("gallery").delete().eq("id", image_id).execute()
         return {"success": True}
+    except HTTPException:
+        raise
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -3980,8 +3984,20 @@ def dados_tv(campaign_id: str):
             lista.append(item)
         combate = {"ativo": bool(cs[0]["combate_ativo"]), "turno": cs[0]["turno_atual"] or 0, "combatentes": lista}
 
+    imagem = imgs[0] if imgs else None
+
+    tokens = []
+    if imagem:
+        try:
+            tokens = supabase.table("map_tokens") \
+                         .select("id, x, y, token_url, scale, rotation") \
+                         .eq("map_id", imagem["id"]).execute().data or []
+        except Exception as e:
+            print(f"[AVISO] Falha ao carregar tokens da TV: {e}")
+
     return {"success": True, "data": {
-        "imagem": imgs[0] if imgs else None,
+        "imagem": imagem,
+        "tokens": tokens,
         "handout": hands[0] if hands else None,
         "combate": combate,
     }}
