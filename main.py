@@ -1368,7 +1368,8 @@ class ProfileLoginRequest(BaseModel):
 
 
 @app.post("/profiles/login")
-async def profile_login(req: ProfileLoginRequest):
+@limiter.limit("8/minute")
+def profile_login(request: Request, req: ProfileLoginRequest):
     try:
         res = supabase.table("profiles").select("*").eq("username", req.username).execute()
 
