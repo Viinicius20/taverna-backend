@@ -2,38 +2,28 @@ import os
 import json
 import uuid
 import time
-import fitz
 import random
 import string
-import base64
 import tempfile
 import urllib.parse
-import math
-import random
+from pywebpush import webpush, WebPushException
 from google.genai.errors import ServerError, ClientError
 from fastapi import FastAPI, HTTPException, UploadFile, File, Request, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from typing import Optional
 from pydantic import BaseModel
-from supabase import create_client, Client
-from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
-from fastapi import FastAPI, HTTPException, UploadFile, File, Request, Body, Form
-from pywebpush import webpush, WebPushException
 from datetime import datetime
 from utils import limpar_texto
-from utils import estado_por_pontos, delta_do_evento, LIMIAR, MAXIMO
+from utils import estado_por_pontos, delta_do_evento, MAXIMO
+from core import supabase, CAMPANHA_ID
+from routers import wiki, fatos, diario, tv
 
-load_dotenv()
-
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 VELOCIDADE_KM_DIA = 40
 CHANCE_EVENTO_POR_DIA = 0.35
@@ -87,8 +77,6 @@ def get_vapid_private_key_object():
         return None
     pem = key.replace('\\n', '\n').encode('utf-8')
     return load_pem_private_key(pem, password=None)
-
-load_dotenv()
 
 # ===================== CONFIG =====================
 app = FastAPI(title="RPG IA - Backend")
@@ -146,10 +134,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-supabase: Client = create_client(
-    os.getenv("SUPABASE_URL"),
-    os.getenv("SUPABASE_KEY")
-)
+app.include_router(wiki.router)
+app.include_router(fatos.router)
+app.include_router(diario.router)
+app.include_router(tv.router)
 
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
@@ -217,8 +205,6 @@ class EncerrarSessaoRequest(BaseModel):
     title: str = ""
 
 # ===================== FUNÇÃO AUXILIAR GEMINI =====================
-from google.genai.errors import ServerError
-import time
 
 GEMINI_KEYS = [
     os.getenv("GEMINI_API_KEY"),
@@ -227,7 +213,6 @@ GEMINI_KEYS = [
     os.getenv("GEMINI_API_KEY_4"),
 ]
 
-CAMPANHA_ID = "00000000-0000-0000-0000-000000000001"
 
 def gerar_json_com_gemini(prompt: str, max_retries=3) -> dict:
     last_error = None
@@ -837,8 +822,6 @@ async def delete_character(character_id: str):
     except Exception as e:
         raise HTTPException(500, f"Erro ao deletar personagem: {str(e)}")
 
-print("DEBUG: Endpoint /npcs foi chamado!")
-
 @app.post("/npcs")
 async def create_npc(campaign_id: str, description: str, system: str = "D&D 5e"):
     print(f"DEBUG: START create_npc")
@@ -1149,61 +1132,6 @@ Retorne APENAS um JSON válido neste formato:
     except Exception as e:
         print(f"ERRO MAGIC ITEM: {e}")
         raise HTTPException(500, {"error": f"Erro ao criar item: {str(e)}"})
-
-
-@app.post('/spells/homebrew')
-async def create_homebrew_spell(req: HombrewSpellRequest):
-    """
-    IA cria uma magia nova baseado em nome e classe
-    """
-
-    prompt = f"""
-    Você é um criador de conteúdo D&D 5e expert.
-
-    Crie uma magia original chamada "{req.name}" para a classe {req.class_name}.
-
-    Siga EXATAMENTE este formato JSON (sem markdown, sem explicações):
-    {{
-      "name": "{req.name}",
-      "level": 2,
-      "school": "Evocation",
-      "class_name": "{req.class_name}",
-      "description": "Descrição curta da magia",
-      "mechanics": "Como funciona em jogo (efeitos, salvaguardas, etc)",
-      "range": "60 feet",
-      "duration": "Concentration, up to 1 minute",
-      "components": "V, S, M"
-    }}
-    """
-
-    try:
-        spell_json = gerar_texto_com_gemini(prompt)
-        spell_data = json.loads(spell_json.replace("```json", "").replace("```", "").strip())
-
-        result = supabase.table('spells').insert({
-            'name': spell_data.get('name'),
-            'level': spell_data.get('level'),
-            'school': spell_data.get('school'),
-            'class_name': spell_data.get('class_name'),
-            'description': spell_data.get('description'),
-            'mechanics': spell_data.get('mechanics'),
-            'range': spell_data.get('range'),
-            'duration': spell_data.get('duration'),
-            'components': spell_data.get('components'),
-            'is_homebrew': True
-        }).execute()
-
-        return {
-            'success': True,
-            'data': spell_data,
-            'message': f"Magia '{spell_data.get('name')}' criada com sucesso!"
-        }
-
-    except json.JSONDecodeError:
-        raise HTTPException(400, {"error": "IA não retornou JSON válido"})
-    except Exception as e:
-        print(f"ERRO HOMEBREW: {e}")
-        raise HTTPException(500, {"error": f"Erro ao criar magia: {str(e)}"})
 
 class RulesRequest(BaseModel):
     query: str
@@ -2493,7 +2421,6 @@ async def sugerir_acao_npc(req: SugestaoNpcRequest):
     d = npc.get("data", {}) or {}
     memoria = d.get("memoria", [])
     memoria_texto = "\n".join([f"- {m['evento']}" for m in memoria]) or "Nenhum evento registrado ainda."
-    mood = HUMOR_DESC.get(mood_recebido, HUMOR_DESC["neutro"])
 
     prompt = f"""
     Você é um mestre de RPG interpretando um NPC.
@@ -3638,7 +3565,7 @@ class ConsequenciaRevelarReq(BaseModel):
 
 
 @app.post("/consequencias/gerar")
-def gerar_consequencia(req: ConsequenciaGerarReq):
+def gerar_consequencia_v2(req: ConsequenciaGerarReq):
     prompt = f"""Você é um mestre de D&D 5e criando um gancho narrativo de longo prazo.
 Ação dos jogadores: "{req.gatilho}"
 
@@ -3735,47 +3662,6 @@ def deletar_consequencia(cid: str):
     supabase.table("consequencias_ocultas").delete().eq("id", cid).execute()
     return {"ok": True}
 
-class FatoCriarReq(BaseModel):
-    campaign_id: str
-    texto: str
-    todos_jogadores: bool = False
-    personagens_que_sabem: list[str] = []
-    npcs_que_sabem: list[str] = []
-
-class FatoEditarReq(BaseModel):
-    texto: Optional[str] = None
-    todos_jogadores: Optional[bool] = None
-    personagens_que_sabem: Optional[list[str]] = None
-    npcs_que_sabem: Optional[list[str]] = None
-
-
-@app.post("/fatos-mundo")
-def criar_fato(req: FatoCriarReq):
-    r = supabase.table("fatos_mundo").insert(req.dict()).execute()
-    return {"data": r.data[0]}
-
-
-@app.get("/fatos-mundo/{campaign_id}")
-def listar_fatos(campaign_id: str):
-    r = supabase.table("fatos_mundo").select("*") \
-        .eq("campaign_id", campaign_id).order("created_at", desc=True).execute()
-    return {"data": r.data}
-
-
-@app.patch("/fatos-mundo/{fato_id}")
-def editar_fato(fato_id: str, req: FatoEditarReq):
-    campos = {k: v for k, v in req.dict().items() if v is not None}
-    if not campos:
-        raise HTTPException(400, "Nada pra atualizar")
-    r = supabase.table("fatos_mundo").update(campos).eq("id", fato_id).execute()
-    return {"data": r.data[0] if r.data else None}
-
-
-@app.delete("/fatos-mundo/{fato_id}")
-def deletar_fato(fato_id: str):
-    supabase.table("fatos_mundo").delete().eq("id", fato_id).execute()
-    return {"ok": True}
-
 class MisterioNovo(BaseModel):
     title: str
     description: str = ""
@@ -3826,45 +3712,6 @@ def deletar_misterio(misterio_id: str):
     supabase.table("mysteries").delete() \
         .eq("id", misterio_id).eq("campaign_id", CAMPANHA_ID).execute()
     return {"success": True}
-
-class ReputacaoRequest(BaseModel):
-    reputation: str
-    reason: str
-
-def registrar_reputacao(faction_id: str, nova: str, motivo: str, origem: str = "manual"):
-    """Atualiza a reputação e grava o motivo. Reutilizável por outros endpoints (ex.: eventos do mundo)."""
-    atual = supabase.table("factions").select("reputation").eq("id", faction_id).limit(1).execute()
-    if not atual.data:
-        raise HTTPException(404, "Facção não encontrada")
-    anterior = atual.data[0].get("reputation") or "neutra"
-    if anterior == nova:
-        return
-    supabase.table("factions").update({"reputation": nova}).eq("id", faction_id).execute()
-    supabase.table("faction_reputation_log").insert({
-        "campaign_id": CAMPANHA_ID,
-        "faction_id": faction_id,
-        "from_rep": anterior,
-        "to_rep": nova,
-        "reason": motivo[:300],
-        "source": origem,
-    }).execute()
-
-@app.post("/factions/{faction_id}/reputation")
-def mudar_reputacao(faction_id: str, body: ReputacaoRequest):
-    if body.reputation not in REPUTACOES:
-        raise HTTPException(400, "Reputação inválida")
-    motivo = body.reason.strip()
-    if not motivo:
-        raise HTTPException(400, "Informe o motivo")
-    registrar_reputacao(faction_id, body.reputation, motivo)
-    return {"success": True}
-
-@app.get("/factions/{faction_id}/reputation-log")
-def historico_reputacao(faction_id: str):
-    res = supabase.table("faction_reputation_log") \
-        .select("id, from_rep, to_rep, reason, source, created_at") \
-        .eq("faction_id", faction_id).order("created_at", desc=True).limit(30).execute()
-    return {"success": True, "data": res.data or []}
 
 class NotaNova(BaseModel):
     text: str
@@ -3925,205 +3772,13 @@ def apagar_nota(nota_id: str):
 
 
 @app.post("/notas-sessao/encerrar-sessao")
-def encerrar_sessao():
+def encerrar_sessao_notas():
     res = supabase.table("session_notes").select("id, sessions_left") \
         .eq("campaign_id", CAMPANHA_ID).eq("done", False).gt("sessions_left", 0).execute()
     for n in res.data or []:
         supabase.table("session_notes").update({"sessions_left": n["sessions_left"] - 1}) \
             .eq("id", n["id"]).execute()
     return {"success": True, "atualizadas": len(res.data or [])}
-
-class CombatStateReq(BaseModel):
-    combatentes: list = []
-    turno_atual: int = 0
-    combate_ativo: bool = False
-
-
-@app.put("/combat/{campaign_id}")
-def salvar_combate(campaign_id: str, req: CombatStateReq):
-    supabase.table("combat_state").upsert({
-        "campaign_id": campaign_id,
-        "combatentes": req.combatentes,
-        "turno_atual": req.turno_atual,
-        "combate_ativo": req.combate_ativo,
-        "updated_at": datetime.utcnow().isoformat(),
-    }, on_conflict="campaign_id").execute()
-    return {"ok": True}
-
-
-@app.get("/tv/{campaign_id}")
-def dados_tv(campaign_id: str):
-    imgs = supabase.table("gallery").select("id, name, url") \
-        .eq("revealed", True).or_("type.is.null,type.neq.handout") \
-        .limit(1).execute().data or []
-
-    hands = supabase.table("gallery").select("id, name, url, text_content") \
-        .eq("campaign_id", campaign_id).eq("type", "handout").eq("revealed", True) \
-        .order("created_at", desc=True).limit(1).execute().data or []
-
-    combate = {"ativo": False, "turno": 0, "combatentes": []}
-    cs = supabase.table("combat_state").select("*").eq("campaign_id", campaign_id).limit(1).execute().data
-    if cs:
-        lista = []
-        for x in (cs[0]["combatentes"] or []):
-            hp_max = x.get("hpMax") or 0
-            hp_atual = x.get("hpAtual") or 0
-            pct = max(0, min(100, round(hp_atual / hp_max * 100))) if hp_max else 0
-            item = {
-                "id": x.get("id"),
-                "nome": x.get("nome"),
-                "tipo": x.get("tipo"),
-                "iniciativa": x.get("iniciativa"),
-                "avatar_url": x.get("avatar_url"),
-                "condicoes": x.get("condicoes") or [],
-                "hp_pct": pct,
-            }
-            if x.get("tipo") == "jogador":      # só jogador mostra o número
-                item["hp_atual"] = hp_atual
-                item["hp_max"] = hp_max
-            lista.append(item)
-        combate = {"ativo": bool(cs[0]["combate_ativo"]), "turno": cs[0]["turno_atual"] or 0, "combatentes": lista}
-
-    imagem = imgs[0] if imgs else None
-
-    tokens = []
-    if imagem:
-        try:
-            tokens = supabase.table("map_tokens") \
-                         .select("id, x, y, token_url, scale, rotation") \
-                         .eq("map_id", imagem["id"]).execute().data or []
-        except Exception as e:
-            print(f"[AVISO] Falha ao carregar tokens da TV: {e}")
-
-    return {"success": True, "data": {
-        "imagem": imagem,
-        "tokens": tokens,
-        "handout": hands[0] if hands else None,
-        "combate": combate,
-    }}
-
-class ApresentarNpcReq(BaseModel):
-    todos: bool = False
-    character_ids: list[str] = []
-
-class NotaDiarioReq(BaseModel):
-    session_number: int
-    texto: str
-
-
-@app.post("/npcs/{npc_id}/apresentar")
-def apresentar_npc(npc_id: str, body: ApresentarNpcReq):
-    n = supabase.table("npcs").select("id").eq("id", npc_id).limit(1).execute().data
-    if not n:
-        raise HTTPException(404, "NPC não encontrado")
-    if body.todos:
-        ids = [c["id"] for c in (supabase.table("characters").select("id")
-               .eq("campaign_id", CAMPANHA_ID).execute().data or [])]
-    else:
-        ids = list(dict.fromkeys(body.character_ids))[:50]
-    if not ids:
-        raise HTTPException(400, "Escolha ao menos um destinatário")
-    supabase.table("npc_conhecidos").upsert(
-        [{"npc_id": npc_id, "character_id": cid} for cid in ids]
-    ).execute()
-    return {"success": True, "enviados": len(ids)}
-
-
-@app.get("/diario/{character_id}")
-def diario_do_personagem(character_id: str):
-    fatos_raw = supabase.table("fatos_mundo").select("*") \
-        .eq("campaign_id", CAMPANHA_ID).order("created_at", desc=True).execute().data or []
-    fatos = [
-        {"id": f["id"], "texto": f["texto"]}
-        for f in fatos_raw
-        if f.get("todos_jogadores") or character_id in (f.get("personagens_que_sabem") or [])
-    ]
-
-    rec = supabase.table("npc_conhecidos").select("npc_id").eq("character_id", character_id).execute().data or []
-    npc_ids = [r["npc_id"] for r in rec]
-    npcs = []
-    if npc_ids:
-        for n in supabase.table("npcs").select("id, name, data").in_("id", npc_ids).execute().data or []:
-            d = n.get("data") or {}
-            npcs.append({
-                "id": n["id"],
-                "name": n["name"],
-                "art_url": d.get("art_url"),
-                "race": d.get("race"),
-                "occupation": d.get("occupation") or d.get("role"),
-            })
-
-    sessoes = supabase.table("sessions").select("session_number, title") \
-        .eq("campaign_id", CAMPANHA_ID).order("session_number", desc=True).execute().data or []
-    notas = supabase.table("diario_notas").select("session_number, texto") \
-        .eq("character_id", character_id).execute().data or []
-
-    return {"success": True, "data": {"fatos": fatos, "npcs": npcs, "sessoes": sessoes, "notas": notas}}
-
-
-@app.put("/diario/{character_id}/nota")
-def salvar_nota_diario(character_id: str, body: NotaDiarioReq):
-    supabase.table("diario_notas").upsert({
-        "character_id": character_id,
-        "session_number": body.session_number,
-        "texto": body.texto[:5000],
-        "updated_at": datetime.utcnow().isoformat(),
-    }, on_conflict="character_id,session_number").execute()
-    return {"ok": True}
-
-class WikiReq(BaseModel):
-    campaign_id: str
-    titulo: str
-    categoria: str = "Lore"
-    conteudo: str = ""
-    notas_mestre: str = ""
-    revelada: bool = False
-
-class WikiEditReq(BaseModel):
-    titulo: Optional[str] = None
-    categoria: Optional[str] = None
-    conteudo: Optional[str] = None
-    notas_mestre: Optional[str] = None
-    revelada: Optional[bool] = None
-
-
-@app.post("/wiki")
-def criar_pagina_wiki(req: WikiReq):
-    r = supabase.table("wiki_paginas").insert(req.dict()).execute()
-    return {"data": r.data[0]}
-
-
-@app.get("/wiki/{campaign_id}")
-def listar_wiki_mestre(campaign_id: str):
-    r = supabase.table("wiki_paginas").select("*").eq("campaign_id", campaign_id) \
-        .order("titulo").execute()
-    return {"data": r.data}
-
-
-@app.get("/wiki/{campaign_id}/jogador")
-def listar_wiki_jogador(campaign_id: str):
-    # nunca seleciona notas_mestre
-    r = supabase.table("wiki_paginas").select("id, titulo, categoria, conteudo") \
-        .eq("campaign_id", campaign_id).eq("revelada", True).order("titulo").execute()
-    return {"data": r.data}
-
-
-@app.patch("/wiki/{wiki_id}")
-def editar_pagina_wiki(wiki_id: str, req: WikiEditReq):
-    campos = {k: v for k, v in req.dict().items() if v is not None}
-    if not campos:
-        raise HTTPException(400, "Nada pra atualizar")
-    campos["updated_at"] = datetime.utcnow().isoformat()
-    r = supabase.table("wiki_paginas").update(campos).eq("id", wiki_id).execute()
-    if not r.data:
-        raise HTTPException(404, "Página não encontrada")
-    return {"data": r.data[0]}
-
-
-@app.delete("/wiki/{wiki_id}")
-def deletar_pagina_wiki(wiki_id: str):
-    supabase.table("wiki_paginas").delete().eq("id", wiki_id).execute()
-    return {"ok": True}
 
 @app.get("/world-changelog/{campaign_id}/nao-lido-mestre")
 def changelog_nao_lido_mestre(campaign_id: str):
