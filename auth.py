@@ -44,3 +44,11 @@ def exigir_mestre(user: dict = Depends(usuario_atual)) -> dict:
     if user.get("role") != "mestre":
         raise HTTPException(403, "Apenas o mestre pode fazer isso")
     return user
+
+def usuario_opcional(authorization: str = Header(None)):
+    if not authorization or not authorization.startswith("Bearer "):
+        return None
+    try:
+        return jwt.decode(authorization[7:], JWT_SECRET, algorithms=[ALGORITMO])
+    except jwt.PyJWTError:
+        return None

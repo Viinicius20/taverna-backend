@@ -1,13 +1,13 @@
 import os
 import json
 import uuid
-import time
 import random
 import string
 import tempfile
 import urllib.parse
 from fastapi import Depends
-from auth import hash_senha, confere_senha, criar_token, usuario_atual, exigir_mestre
+from ia import gerar_texto_com_gemini, gerar_json_com_gemini
+from auth import confere_senha, criar_token, exigir_mestre
 from pywebpush import webpush, WebPushException
 from google.genai.errors import ServerError, ClientError
 from fastapi import FastAPI, HTTPException, UploadFile, File, Request, Body, Form
@@ -25,6 +25,7 @@ from utils import limpar_texto
 from utils import estado_por_pontos, delta_do_evento, MAXIMO
 from core import supabase, CAMPANHA_ID
 from routers import wiki, fatos, diario, tv
+from auth import usuario_opcional
 
 
 MESTRE = [Depends(exigir_mestre)]
@@ -206,56 +207,6 @@ class DeletarArteRequest(BaseModel):
 class EncerrarSessaoRequest(BaseModel):
     campaign_id: str
     title: str = ""
-
-# ===================== FUNÇÃO AUXILIAR GEMINI =====================
-
-GEMINI_KEYS = [
-    os.getenv("GEMINI_API_KEY"),
-    os.getenv("GEMINI_API_KEY_3"),
-    os.getenv("GEMINI_API_KEY_2"),
-    os.getenv("GEMINI_API_KEY_4"),
-]
-
-
-def gerar_json_com_gemini(prompt: str, max_retries=3) -> dict:
-    last_error = None
-
-    for key in GEMINI_KEYS:
-        if not key:
-            continue
-        client_atual = genai.Client(api_key=key)
-
-        for tentativa in range(max_retries):
-            try:
-                response = client_atual.models.generate_content(
-                    model="gemini-2.5-flash",
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        temperature=0.7,
-                        response_mime_type="application/json"
-                    )
-                )
-                text = response.text.strip()
-                if text.startswith("```json"):
-                    text = text[7:-3].strip()
-                return json.loads(text)
-
-            except Exception as e:
-                err_str = str(e)
-                if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
-                    print(f"[IA] Quota esgotada na key, tentando próxima...")
-                    last_error = e
-                    break  # vai pra próxima key
-                elif "503" in err_str or "UNAVAILABLE" in err_str:
-                    last_error = e
-                    print(f"[IA] 503 tentativa {tentativa+1}/{max_retries}")
-                    time.sleep(2 * (tentativa + 1))
-                else:
-                    last_error = e
-                    break
-
-    raise last_error
-
 
 # ===================== ENDPOINTS =====================
 
@@ -447,50 +398,6 @@ Itens mágicos: apropriados pro nível {req.nivel_medio}, criativos e únicos.""
     except Exception as e:
         print(f"ERRO LOOT: {e}")
         raise HTTPException(500, {"error": f"Erro ao gerar loot: {str(e)}"})
-
-def gerar_texto_com_gemini(parts_ou_prompt, max_retries=3):
-    last_error = None
-    contents = parts_ou_prompt if isinstance(parts_ou_prompt, list) else parts_ou_prompt
-
-    for idx, key in enumerate(GEMINI_KEYS):
-        if not key:
-            continue
-        client_atual = genai.Client(api_key=key)
-
-        for tentativa in range(max_retries):
-            try:
-                if isinstance(parts_ou_prompt, list):
-                    response = client_atual.models.generate_content(
-                        model="gemini-2.5-flash",
-                        contents=[{"role": "user", "parts": parts_ou_prompt}]
-                    )
-                else:
-                    response = client_atual.models.generate_content(
-                        model="gemini-2.5-flash",
-                        contents=parts_ou_prompt,
-                        config=types.GenerateContentConfig(
-                            temperature=0.7,
-                            response_mime_type="application/json"
-                        )
-                    )
-                return response.text.strip()
-
-            except Exception as e:
-                err_str = str(e)
-                if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
-                    print(f"[IA] Key {idx+1}: quota esgotada, indo pra próxima key...")
-                    last_error = e
-                    break
-                elif "503" in err_str or "UNAVAILABLE" in err_str:
-                    last_error = e
-                    print(f"[IA] Key {idx+1}: 503 (tentativa {tentativa+1}/{max_retries})")
-                    time.sleep(2 * (tentativa + 1))
-                else:
-                    last_error = e
-                    print(f"[IA] Key {idx+1}: erro não tratado — {err_str[:200]}")
-                    break
-
-    raise last_error
 
 
 @app.post("/level-up")
@@ -1438,7 +1345,7 @@ async def patch_character(character_id: str, req: dict = Body(...)):
         raise HTTPException(500, f"Erro ao atualizar: {str(e)}")
 
 
-@app.get("/bestiary")
+@app.get("/bestiary", dependencies=MESTRE)
 async def get_bestiary(name: str = "", cr: str = "", type: str = ""):
     try:
         query = supabase.table("bestiary").select("*")
@@ -1570,13 +1477,15 @@ async def upload_gallery(
 
 
 @app.get("/gallery")
-async def get_gallery(campaign_id: str = ""):
+async def get_gallery(campaign_id: str = "", user: Optional[dict] = Depends(usuario_opcional)):
     try:
         query = supabase.table("gallery").select("*").order("created_at", desc=True)
         if campaign_id:
             query = query.eq("campaign_id", campaign_id)
-        res = query.execute()
-        return {"success": True, "data": res.data}
+        dados = query.execute().data or []
+        if not user or user.get("role") != "mestre":
+            dados = [i for i in dados if i.get("revealed")]
+        return {"success": True, "data": dados}
     except Exception as e:
         raise HTTPException(500, f"Erro ao buscar galeria: {str(e)}")
 
@@ -1902,16 +1811,8 @@ async def enviar_push_notification(user_id: str, titulo: str, mensagem: str):
     except Exception as e:
         print(f"Erro no push notification: {str(e)}")
 
-@app.get("/debug/vapid")
-async def debug_vapid():
-    return {
-        "public_key_exists": bool(VAPID_PUBLIC_KEY),
-        "private_key_exists": bool(VAPID_PRIVATE_KEY),
-        "public_key_preview": VAPID_PUBLIC_KEY[:20] if VAPID_PUBLIC_KEY else None
-    }
 
-
-@app.get("/bestiary/random-description")
+@app.get("/bestiary/random-description", dependencies=MESTRE)
 def bestiary_random_description():
     try:
         res = supabase.table("bestiary").select("name, type, cr, description").execute()
@@ -2038,7 +1939,7 @@ def montar_prompt_imagem_item(descricao_pt):
         return descricao_pt
 
 
-@app.post("/gerar-arte")
+@app.post("/gerar-arte", dependencies=MESTRE)
 async def gerar_arte(req: GerarArteRequest):
 
     if req.tipo == "npc":
@@ -2091,7 +1992,7 @@ async def gerar_arte(req: GerarArteRequest):
 
     return {"success": True, "art_url": image_url}
 
-@app.post("/deletar-arte")
+@app.post("/deletar-arte", dependencies=MESTRE)
 async def deletar_arte(req: DeletarArteRequest):
     if req.tipo == "npc":
         result = supabase.table("npcs").select("*").eq("id", req.id).single().execute()
@@ -2226,7 +2127,7 @@ async def encerrar_sessao(req: EncerrarSessaoRequest):
 
     return {"success": True, "summary": resumo, "session_number": novo_numero, "eventos_avancados": eventos_avancados}
 
-@app.get("/world-log/{campaign_id}")
+@app.get("/world-log/{campaign_id}", dependencies=MESTRE)
 async def listar_world_log(campaign_id: str):
     result = supabase.table("world_log").select("*").eq("campaign_id", campaign_id).order("created_at", desc=True).execute()
     return {"success": True, "data": result.data}
@@ -2278,7 +2179,7 @@ async def gerar_faccao(req: FactionRequest):
         raise HTTPException(500, f"Erro ao gerar facção: {str(e)}")
 
 
-@app.get("/factions/{campaign_id}")
+@app.get("/factions/{campaign_id}", dependencies=MESTRE)
 async def listar_faccoes(campaign_id: str):
     result = supabase.table("factions").select("*").eq("campaign_id", campaign_id).order("name").execute()
     return {"success": True, "data": result.data}
@@ -2307,7 +2208,7 @@ class DescricaoContextualRequest(BaseModel):
     contexto: str
     system: str = "D&D 5e"
 
-@app.post("/gerar-descricao-contextual")
+@app.post("/gerar-descricao-contextual", dependencies=MESTRE)
 async def gerar_descricao_contextual(req: DescricaoContextualRequest):
     prompt = f"""
     Você é um mestre de RPG narrando uma cena para os jogadores.
@@ -2587,7 +2488,7 @@ async def gerar_local(req: LocationRequest):
         raise HTTPException(500, f"Erro ao gerar local: {str(e)}")
 
 
-@app.get("/locations/{campaign_id}")
+@app.get("/locations/{campaign_id}", dependencies=MESTRE)
 async def listar_locais(campaign_id: str):
     result = supabase.table("locations").select("*").eq("campaign_id", campaign_id).order("name").execute()
     return {"success": True, "data": result.data}
@@ -2748,7 +2649,7 @@ async def criar_evento_mundo(req: WorldEventRequest):
     return {"success": True, "data": result.data[0] if result.data else None}
 
 
-@app.get("/world-events/{campaign_id}")
+@app.get("/world-events/{campaign_id}", dependencies=MESTRE)
 async def listar_eventos_mundo(campaign_id: str):
     result = supabase.table("world_events").select("*").eq("campaign_id", campaign_id).order("created_at").execute()
     return {"success": True, "data": result.data}
@@ -2881,7 +2782,7 @@ def mudar_reputacao(tipo: str, entidade_id: str, body: AjusteReputacao):
     return {"success": True, "data": ajustar_reputacao(tipo, entidade_id, body.delta, motivo)}
 
 
-@app.get("/reputation/{tipo}/{entidade_id}/log")
+@app.get("/reputation/{tipo}/{entidade_id}/log", dependencies=MESTRE)
 def historico_reputacao(tipo: str, entidade_id: str):
     if tipo not in ("faction", "npc"):
         raise HTTPException(400, "Tipo inválido")
@@ -2981,7 +2882,7 @@ def marcar_changelog_lido(changelog_id: str, personagem_id: str = Body(..., embe
     return {"ok": True}
 
 
-@app.get("/world-changelog/{campaign_id}")
+@app.get("/world-changelog/{campaign_id}", dependencies=MESTRE)
 def listar_changelog(campaign_id: str):
     """Histórico completo — usado pelo mestre no MundoVivo."""
     resp = supabase.table("world_changelog").select("*") \
@@ -3015,7 +2916,7 @@ async def criar_flag(req: FlagRequest):
         raise HTTPException(500, f"Erro ao criar flag: {str(e)}")
 
 
-@app.get("/flags/{campaign_id}")
+@app.get("/flags/{campaign_id}", dependencies=MESTRE)
 async def listar_flags(campaign_id: str):
     result = supabase.table("campaign_flags").select("*").eq("campaign_id", campaign_id).order("key").execute()
     return {"success": True, "data": result.data}
@@ -3050,7 +2951,7 @@ async def criar_arquivo_mestre(req: ArquivoMestreRequest):
     return {"success": True, "data": result.data[0] if result.data else None}
 
 
-@app.get("/arquivo-mestre/{campaign_id}")
+@app.get("/arquivo-mestre/{campaign_id}", dependencies=MESTRE)
 async def listar_arquivo_mestre(campaign_id: str):
     result = supabase.table("arquivo_mestre").select("*").eq("campaign_id", campaign_id).order("created_at", desc=True).execute()
     return {"success": True, "data": result.data}
@@ -3076,7 +2977,7 @@ async def criar_profecia(req: ProphecyRequest):
     }).execute()
     return {"success": True, "data": result.data[0] if result.data else None}
 
-@app.get("/prophecies/{campaign_id}")
+@app.get("/prophecies/{campaign_id}", dependencies=MESTRE)
 async def listar_profecias(campaign_id: str):
     result = supabase.table("prophecies").select("*").eq("campaign_id", campaign_id).execute()
     return {"success": True, "data": result.data}
@@ -3121,7 +3022,7 @@ def encerrar_evento(evento_id: str):
     return resp.data[0]
 
 
-@app.get("/economia/eventos-campanha/{campaign_id}")
+@app.get("/economia/eventos-campanha/{campaign_id}", dependencies=MESTRE)
 def listar_todos_eventos(campaign_id: str):
     """Lista todos os eventos regionais (ativos e encerrados) — usado pela aba MundoVivo."""
     resp = supabase.table("eventos_regionais") \
@@ -3187,7 +3088,7 @@ class IniciarViagem(BaseModel):
     clima: Optional[str] = None
 
 
-@app.get("/viagem/locais/{campaign_id}")
+@app.get("/viagem/locais/{campaign_id}", dependencies=MESTRE)
 def listar_locais_para_viagem(campaign_id: str):
     resp = supabase.table("locations").select("id, name, region_info, monsters, commerce") \
         .eq("campaign_id", campaign_id).execute()
@@ -3247,7 +3148,7 @@ def avancar_dia(viagem_id: str):
     return resp.data[0]
 
 
-@app.get("/viagem/campanha/{campaign_id}")
+@app.get("/viagem/campanha/{campaign_id}", dependencies=MESTRE)
 def listar_viagens(campaign_id: str):
     resp = supabase.table("viagens") \
         .select("*, origem:origem_id(name), destino:destino_id(name)") \
@@ -3256,7 +3157,7 @@ def listar_viagens(campaign_id: str):
         .execute()
     return {"data": resp.data}
 
-@app.get("/viagem/{viagem_id}")
+@app.get("/viagem/{viagem_id}", dependencies=MESTRE)
 def status_viagem(viagem_id: str):
     resp = supabase.table("viagens").select("*").eq("id", viagem_id).single().execute()
     if not resp.data:
@@ -3284,7 +3185,7 @@ class AvancarSegredoReq(BaseModel):
     secret: str
 
 
-@app.get("/secret-stages/{campaign_id}/{npc_id}")
+@app.get("/secret-stages/{campaign_id}/{npc_id}", dependencies=MESTRE)
 def get_secret_stages(campaign_id: str, npc_id: str):
     r = supabase.table("npc_secret_stages").select("*") \
         .eq("campaign_id", campaign_id).eq("npc_id", npc_id).execute()
@@ -3446,7 +3347,7 @@ Retorne APENAS um JSON válido:
     return {"data": r.data[0]}
 
 
-@app.get("/gazeta/{campaign_id}")
+@app.get("/gazeta/{campaign_id}", dependencies=MESTRE)
 def listar_gazetas(campaign_id: str):
     r = supabase.table("gazetas").select("*").eq("campaign_id", campaign_id) \
         .order("created_at", desc=True).execute()
@@ -3529,7 +3430,7 @@ Responda APENAS com o texto da consequência, sem prefixos, sem aspas, sem markd
     return {"data": r.data[0]}
 
 
-@app.get("/downtime/pendentes/{campaign_id}")
+@app.get("/downtime/pendentes/{campaign_id}", dependencies=MESTRE)
 def listar_downtime_pendentes(campaign_id: str):
     r = supabase.table("downtime_requests").select("*") \
         .eq("campaign_id", campaign_id).eq("status", "pendente") \
@@ -3606,14 +3507,14 @@ def criar_consequencia(req: ConsequenciaCriarReq):
     return {"data": r.data[0]}
 
 
-@app.get("/consequencias/{campaign_id}")
+@app.get("/consequencias/{campaign_id}", dependencies=MESTRE)
 def listar_consequencias(campaign_id: str):
     r = supabase.table("consequencias_ocultas").select("*") \
         .eq("campaign_id", campaign_id).order("created_at", desc=True).execute()
     return {"data": r.data}
 
 
-@app.get("/consequencias/prontas/{campaign_id}")
+@app.get("/consequencias/prontas/{campaign_id}", dependencies=MESTRE)
 def consequencias_prontas(campaign_id: str):
     """Consequências com condição automática já satisfeita, ainda ocultas."""
     ocultas = supabase.table("consequencias_ocultas").select("*") \
@@ -3793,7 +3694,7 @@ def encerrar_sessao_notas():
             .eq("id", n["id"]).execute()
     return {"success": True, "atualizadas": len(res.data or [])}
 
-@app.get("/world-changelog/{campaign_id}/nao-lido-mestre")
+@app.get("/world-changelog/{campaign_id}/nao-lido-mestre", dependencies=MESTRE)
 def changelog_nao_lido_mestre(campaign_id: str):
     r = supabase.table("world_changelog").select("*") \
         .eq("campaign_id", campaign_id).eq("visto_mestre", False) \
