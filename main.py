@@ -6,6 +6,8 @@ import random
 import string
 import tempfile
 import urllib.parse
+from fastapi import Depends
+from auth import hash_senha, confere_senha, criar_token, usuario_atual, exigir_mestre
 from pywebpush import webpush, WebPushException
 from google.genai.errors import ServerError, ClientError
 from fastapi import FastAPI, HTTPException, UploadFile, File, Request, Body, Form
@@ -25,6 +27,7 @@ from core import supabase, CAMPANHA_ID
 from routers import wiki, fatos, diario, tv
 
 
+MESTRE = [Depends(exigir_mestre)]
 VELOCIDADE_KM_DIA = 40
 CHANCE_EVENTO_POR_DIA = 0.35
 
@@ -409,7 +412,7 @@ class LootRequest(BaseModel):
     quantidade_magicos: int = 1
     contexto: str = ""
 
-@app.post("/loot/generate")
+@app.post("/loot/generate", dependencies=MESTRE)
 async def generate_loot(req: LootRequest):
     prompt = f"""Você é um mestre de D&D 5e experiente.
 Gere uma lista de itens de loot para um grupo de nível {req.nivel_medio}.
@@ -706,7 +709,7 @@ Retorne APENAS o JSON, sem explicações.
         raise HTTPException(500, f"Erro ao processar PDF: {str(e)}")
 
 
-@app.post("/upload-pdf-npc")
+@app.post("/upload-pdf-npc", dependencies=MESTRE)
 async def upload_pdf_npc(file: UploadFile = File(...), system: str = "D&D 5e", campaign_id: str = ""):
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(400, "Arquivo deve ser PDF")
@@ -822,7 +825,7 @@ async def delete_character(character_id: str):
     except Exception as e:
         raise HTTPException(500, f"Erro ao deletar personagem: {str(e)}")
 
-@app.post("/npcs")
+@app.post("/npcs", dependencies=MESTRE)
 async def create_npc(campaign_id: str, description: str, system: str = "D&D 5e"):
     print(f"DEBUG: START create_npc")
     prompt = f"""
@@ -893,7 +896,7 @@ async def list_npcs(campaign_id: str):
         raise HTTPException(500, f"Erro ao buscar NPCs: {str(e)}")
 
 
-@app.delete("/npcs/{npc_id}")
+@app.delete("/npcs/{npc_id}", dependencies=MESTRE)
 async def delete_npc(npc_id: str):
     try:
         supabase.table("npcs").delete().eq("id", npc_id).execute()
@@ -1044,7 +1047,7 @@ Retorne APENAS um JSON: {{"boato": "frase curta", "fonte": "quem espalha"}}"""
         print(f"ERRO BOATO: {e}")
         raise HTTPException(500, f"Erro ao gerar boato: {str(e)}")
 
-@app.patch("/magic-items/{item_id}/revelar")
+@app.patch("/magic-items/{item_id}/revelar", dependencies=MESTRE)
 async def revelar_item(item_id: str):
     try:
         supabase.table("magic_items").update({"identificado": True}).eq("id", item_id).execute()
@@ -1052,7 +1055,7 @@ async def revelar_item(item_id: str):
     except Exception as e:
         raise HTTPException(500, f"Erro ao revelar item: {str(e)}")
 
-@app.post("/sessions")
+@app.post("/sessions", dependencies=MESTRE)
 async def create_session(req: SessionRequest):
     try:
         data = {
@@ -1066,7 +1069,7 @@ async def create_session(req: SessionRequest):
     except Exception as e:
         raise HTTPException(500, f"Erro ao criar sessão: {str(e)}")
 
-@app.delete("/sessions/{session_id}")
+@app.delete("/sessions/{session_id}", dependencies=MESTRE)
 async def delete_session(session_id: str):
     try:
         supabase.table("sessions").delete().eq("id", session_id).execute()
@@ -1074,7 +1077,7 @@ async def delete_session(session_id: str):
     except Exception as e:
         raise HTTPException(500, f"Erro ao deletar sessão: {str(e)}")
 
-@app.post("/session-state/{campaign_id}/countdown")
+@app.post("/session-state/{campaign_id}/countdown", dependencies=MESTRE)
 async def set_countdown(campaign_id: str, active: bool, duration: int = 60):
     try:
         from datetime import datetime, timedelta
@@ -1096,7 +1099,7 @@ async def set_countdown(campaign_id: str, active: bool, duration: int = 60):
         raise HTTPException(500, f"Erro ao atualizar countdown: {str(e)}")
 
 
-@app.post("/magic-items/homebrew")
+@app.post("/magic-items/homebrew", dependencies=MESTRE)
 async def create_homebrew_item(req: MagicItemRequest):
     rarity_instruction = f'A raridade DEVE ser exatamente "{req.rarity}".' if req.rarity else 'Escolha a raridade adequada ao lore do item.'
 
@@ -1220,7 +1223,7 @@ async def create_manual_spell(req: ManualSpellRequest):
         'message': f"Magia '{req.name}' criada com sucesso!"
     }
 
-@app.post("/rules/search")
+@app.post("/rules/search", dependencies=MESTRE)
 async def search_rules(req: RulesRequest):
     prompt = f"""Você é um especialista em {req.system}.
 O mestre perguntou: "{req.query}"
@@ -1256,7 +1259,7 @@ class EncountroRequest(BaseModel):
     contexto: str = ""
     usar_mundo: bool = True
 
-@app.post("/encounter/generate")
+@app.post("/encounter/generate", dependencies=MESTRE)
 async def generate_encounter(req: EncountroRequest):
     contexto_mundo = ""
     if req.usar_mundo:
@@ -1328,7 +1331,7 @@ class SecretMessageRequest(BaseModel):
     message: str
 
 
-@app.post("/secret-messages")
+@app.post("/secret-messages", dependencies=MESTRE)
 async def send_secret_message(req: SecretMessageRequest):
     try:
         data = {
@@ -1361,27 +1364,36 @@ async def send_secret_message(req: SecretMessageRequest):
 
 class ProfileLoginRequest(BaseModel):
     username: str
+    password: Optional[str] = None
 
 
 @app.post("/profiles/login")
 async def profile_login(req: ProfileLoginRequest):
     try:
-        # Busca por username
         res = supabase.table("profiles").select("*").eq("username", req.username).execute()
 
         if res.data:
-            return {"success": True, "data": res.data[0]}
+            perfil = res.data[0]
+            if perfil.get("password_hash"):
+                if not req.password:
+                    raise HTTPException(401, "SENHA_NECESSARIA")
+                if not confere_senha(req.password, perfil["password_hash"]):
+                    raise HTTPException(401, "Senha incorreta")
+        else:
+            novo = supabase.table("profiles").insert({
+                "id": str(uuid.uuid4()),
+                "username": req.username,
+                "role": "jogador"
+            }).execute()
+            perfil = novo.data[0]
 
-        # Cria novo profile
-        novo = supabase.table("profiles").insert({
-            "id": str(uuid.uuid4()),
-            "username": req.username,
-            "role": "jogador"
-        }).execute()
-        return {"success": True, "data": novo.data[0]}
+        publico = {k: v for k, v in perfil.items() if k != "password_hash"}
+        return {"success": True, "data": publico, "token": criar_token(perfil)}
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"ERRO PROFILE LOGIN: {str(e)}")
-        raise HTTPException(500, f"Erro ao fazer login: {str(e)}")
+        raise HTTPException(500, "Erro ao fazer login")
 
 @app.get("/secret-messages/{character_id}")
 async def get_secret_messages(character_id: str):
@@ -1406,7 +1418,7 @@ async def mark_as_read(message_id: str):
     except Exception as e:
         raise HTTPException(500, f"Erro ao marcar mensagem: {str(e)}")
 
-@app.delete("/magic-items/{item_id}")
+@app.delete("/magic-items/{item_id}", dependencies=MESTRE)
 async def delete_magic_item(item_id: str):
     try:
         print(f"Deletando item: {item_id}")
@@ -1441,7 +1453,7 @@ async def get_bestiary(name: str = "", cr: str = "", type: str = ""):
         raise HTTPException(500, f"Erro ao buscar bestiário: {str(e)}")
 
 
-@app.post("/bestiary/generate")
+@app.post("/bestiary/generate", dependencies=MESTRE)
 @limiter.limit("10/minute")
 async def generate_bestiary(request: Request, nome: str, cr: str = "", tipo: str = "", descricao: str = ""):
     cr_instruction = f'O CR DEVE ser exatamente "{cr}".' if cr else 'Escolha o CR adequado.'
@@ -1510,7 +1522,7 @@ Retorne APENAS um JSON válido:
         raise HTTPException(500, f"Erro ao gerar monstro: {str(e)}")
 
 
-@app.delete("/bestiary/{monster_id}")
+@app.delete("/bestiary/{monster_id}", dependencies=MESTRE)
 async def delete_monster(monster_id: str):
     try:
         supabase.table("bestiary").delete().eq("id", monster_id).execute()
@@ -1519,7 +1531,7 @@ async def delete_monster(monster_id: str):
         raise HTTPException(500, f"Erro ao deletar monstro: {str(e)}")
 
 
-@app.post("/gallery/upload")
+@app.post("/gallery/upload", dependencies=MESTRE)
 async def upload_gallery(
         file: UploadFile = File(...),
         campaign_id: str = "",
@@ -1568,7 +1580,7 @@ async def get_gallery(campaign_id: str = ""):
         raise HTTPException(500, f"Erro ao buscar galeria: {str(e)}")
 
 
-@app.patch("/gallery/{image_id}/reveal")
+@app.patch("/gallery/{image_id}/reveal", dependencies=MESTRE)
 async def reveal_image(image_id: str):
     try:
         supabase.table("gallery").update({"revealed": False}) \
@@ -1581,7 +1593,7 @@ async def reveal_image(image_id: str):
         raise HTTPException(500, f"Erro ao revelar imagem: {str(e)}")
 
 
-@app.patch("/gallery/{image_id}/hide")
+@app.patch("/gallery/{image_id}/hide", dependencies=MESTRE)
 async def hide_image(image_id: str):
     try:
         res = supabase.table("gallery").update({"revealed": False}).eq("id", image_id).execute()
@@ -1590,7 +1602,7 @@ async def hide_image(image_id: str):
         raise HTTPException(500, f"Erro ao esconder imagem: {str(e)}")
 
 
-@app.delete("/gallery/{image_id}")
+@app.delete("/gallery/{image_id}", dependencies=MESTRE)
 def delete_gallery_image(image_id: str):
     try:
         res = supabase.table("gallery").select("*").eq("id", image_id).limit(1).execute()
@@ -1620,7 +1632,7 @@ async def get_map_tokens(campaign_id: str):
     except Exception as e:
         raise HTTPException(500, f"Erro ao buscar tokens: {str(e)}")
 
-@app.post("/map-tokens")
+@app.post("/map-tokens", dependencies=MESTRE)
 async def add_map_token(data: dict = Body(...)):
     try:
         res = supabase.table("map_tokens").insert(data).execute()
@@ -1628,7 +1640,7 @@ async def add_map_token(data: dict = Body(...)):
     except Exception as e:
         raise HTTPException(500, f"Erro ao adicionar token: {str(e)}")
 
-@app.patch("/map-tokens/{token_id}/position")
+@app.patch("/map-tokens/{token_id}/position", dependencies=MESTRE)
 async def update_token_position(token_id: str, data: dict = Body(...)):
     try:
         res = supabase.table("map_tokens").update({"x": data["x"], "y": data["y"]}).eq("id", token_id).execute()
@@ -1636,7 +1648,7 @@ async def update_token_position(token_id: str, data: dict = Body(...)):
     except Exception as e:
         raise HTTPException(500, f"Erro ao mover token: {str(e)}")
 
-@app.patch("/map-tokens/{token_id}/label")
+@app.patch("/map-tokens/{token_id}/label", dependencies=MESTRE)
 async def update_token_label(token_id: str, data: dict = Body(...)):
     try:
         res = supabase.table("map_tokens").update({"label": data["label"]}).eq("id", token_id).execute()
@@ -1644,7 +1656,7 @@ async def update_token_label(token_id: str, data: dict = Body(...)):
     except Exception as e:
         raise HTTPException(500, f"Erro ao atualizar label: {str(e)}")
 
-@app.patch("/map-tokens/{token_id}/rotation")
+@app.patch("/map-tokens/{token_id}/rotation", dependencies=MESTRE)
 async def update_token_rotation(token_id: str, data: dict = Body(...)):
     try:
         res = supabase.table("map_tokens").update({"rotation": data["rotation"]}).eq("id", token_id).execute()
@@ -1652,7 +1664,7 @@ async def update_token_rotation(token_id: str, data: dict = Body(...)):
     except Exception as e:
         raise HTTPException(500, f"Erro ao rotacionar token: {str(e)}")
 
-@app.patch("/map-tokens/{token_id}/scale")
+@app.patch("/map-tokens/{token_id}/scale", dependencies=MESTRE)
 async def update_token_scale(token_id: str, data: dict = Body(...)):
     try:
         res = supabase.table("map_tokens").update({"scale": data["scale"]}).eq("id", token_id).execute()
@@ -1660,7 +1672,7 @@ async def update_token_scale(token_id: str, data: dict = Body(...)):
     except Exception as e:
         raise HTTPException(500, f"Erro ao escalar token: {str(e)}")
 
-@app.delete("/map-tokens/{token_id}")
+@app.delete("/map-tokens/{token_id}", dependencies=MESTRE)
 async def delete_map_token(token_id: str):
     try:
         supabase.table("map_tokens").delete().eq("id", token_id).execute()
@@ -1673,7 +1685,7 @@ def gerar_codigo_campanha():
     return ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
 
 
-@app.post("/campaigns")
+@app.post("/campaigns", dependencies=MESTRE)
 async def criar_campanha(data: dict = Body(...)):
     try:
         codigo = gerar_codigo_campanha()
@@ -2097,7 +2109,7 @@ async def deletar_arte(req: DeletarArteRequest):
 
     return {"success": True}
 
-@app.post("/sessions/encerrar")
+@app.post("/sessions/encerrar", dependencies=MESTRE)
 async def encerrar_sessao(req: EncerrarSessaoRequest):
     ultimas = supabase.table("sessions").select("*").eq("campaign_id", req.campaign_id).order("session_number", desc=True).limit(1).execute()
     ultimo_numero = ultimas.data[0]["session_number"] if ultimas.data else 0
@@ -2218,7 +2230,7 @@ async def listar_world_log(campaign_id: str):
     result = supabase.table("world_log").select("*").eq("campaign_id", campaign_id).order("created_at", desc=True).execute()
     return {"success": True, "data": result.data}
 
-@app.delete("/world-log/{log_id}")
+@app.delete("/world-log/{log_id}", dependencies=MESTRE)
 def deletar_world_log(log_id: str):
     resp = supabase.table("world_log").delete().eq("id", log_id).execute()
     if not resp.data:
@@ -2230,7 +2242,7 @@ class FactionRequest(BaseModel):
     description: str
     system: str = "D&D 5e"
 
-@app.post("/factions/generate")
+@app.post("/factions/generate", dependencies=MESTRE)
 async def gerar_faccao(req: FactionRequest):
     prompt = f"""
     Você é um mestre de RPG criando uma facção para o mundo de campanha.
@@ -2278,14 +2290,14 @@ class UpdateFactionRequest(BaseModel):
     goals: str = None
     reputation: str = None
 
-@app.patch("/factions/{faction_id}")
+@app.patch("/factions/{faction_id}", dependencies=MESTRE)
 async def atualizar_faccao(faction_id: str, req: UpdateFactionRequest):
     updates = {k: v for k, v in req.dict().items() if v is not None}
     supabase.table("factions").update(updates).eq("id", faction_id).execute()
     return {"success": True}
 
 
-@app.delete("/factions/{faction_id}")
+@app.delete("/factions/{faction_id}", dependencies=MESTRE)
 async def deletar_faccao(faction_id: str):
     supabase.table("factions").delete().eq("id", faction_id).execute()
     return {"success": True}
@@ -2319,7 +2331,7 @@ class ConsequenciaRequest(BaseModel):
     situacao: str
     system: str = "D&D 5e"
 
-@app.post("/gerar-consequencia")
+@app.post("/gerar-consequencia", dependencies=MESTRE)
 async def gerar_consequencia(req: ConsequenciaRequest):
     prompt = f"""
     Você é um mestre de RPG experiente ajudando outro mestre a improvisar.
@@ -2350,7 +2362,7 @@ class ConsequenciaSugerirReq(BaseModel):
     gatilho: str
 
 
-@app.post("/consequencias/sugerir")
+@app.post("/consequencias/sugerir", dependencies=MESTRE)
 def sugerir_consequencias(req: ConsequenciaSugerirReq):
     prompt = f"""Você é um mestre de D&D 5e criando ganchos narrativos de longo prazo.
 Ação dos jogadores: "{req.gatilho}"
@@ -2389,7 +2401,7 @@ class MemoriaNpcRequest(BaseModel):
     npc_id: str
     evento: str
 
-@app.post("/npcs/memoria")
+@app.post("/npcs/memoria", dependencies=MESTRE)
 async def adicionar_memoria_npc(req: MemoriaNpcRequest):
     result = supabase.table("npcs").select("*").eq("id", req.npc_id).single().execute()
     npc = result.data
@@ -2410,7 +2422,7 @@ class SugestaoNpcRequest(BaseModel):
     situacao_atual: str = ""
     mood: str = "neutro"
 
-@app.post("/npcs/sugerir-acao")
+@app.post("/npcs/sugerir-acao", dependencies=MESTRE)
 async def sugerir_acao_npc(req: SugestaoNpcRequest):
     mood = HUMOR_DESC.get(req.mood, HUMOR_DESC["neutro"])
     result = supabase.table("npcs").select("*").eq("id", req.npc_id).limit(1).execute()
@@ -2451,7 +2463,7 @@ class RemoverMemoriaRequest(BaseModel):
     npc_id: str
     index: int
 
-@app.post("/npcs/memoria/remover")
+@app.post("/npcs/memoria/remover", dependencies=MESTRE)
 async def remover_memoria_npc(req: RemoverMemoriaRequest):
     result = supabase.table("npcs").select("*").eq("id", req.npc_id).single().execute()
     npc = result.data
@@ -2528,7 +2540,7 @@ class LocationRequest(BaseModel):
     description: str
     system: str = "D&D 5e"
 
-@app.post("/locations/generate")
+@app.post("/locations/generate", dependencies=MESTRE)
 async def gerar_local(req: LocationRequest):
     prompt = f"""
     Você é um mestre de RPG criando um local para o mundo de campanha.
@@ -2584,14 +2596,14 @@ class UpdateLocationRequest(BaseModel):
     faction_id: str = None
     name: str = None
 
-@app.patch("/locations/{location_id}")
+@app.patch("/locations/{location_id}", dependencies=MESTRE)
 async def atualizar_local(location_id: str, req: UpdateLocationRequest):
     updates = {k: v for k, v in req.dict().items() if v is not None}
     supabase.table("locations").update(updates).eq("id", location_id).execute()
     return {"success": True}
 
 
-@app.delete("/locations/{location_id}")
+@app.delete("/locations/{location_id}", dependencies=MESTRE)
 async def deletar_local(location_id: str):
     supabase.table("locations").delete().eq("id", location_id).execute()
     return {"success": True}
@@ -2603,7 +2615,7 @@ class HandoutRequest(BaseModel):
     remetente: str = ""
 
 
-@app.post("/gallery/gerar-handout")
+@app.post("/gallery/gerar-handout", dependencies=MESTRE)
 def gerar_handout(req: HandoutRequest):   # def: as chamadas ao Supabase e ao Gemini são bloqueantes
     tipo = req.tipo_documento if req.tipo_documento in INSTRUCAO_DOC else "carta"
     descricao = req.descricao.strip()[:1000]
@@ -2652,7 +2664,7 @@ class EnviarHandoutRequest(BaseModel):
     character_ids: list[str] = []
 
 
-@app.post("/gallery/{handout_id}/enviar")
+@app.post("/gallery/{handout_id}/enviar", dependencies=MESTRE)
 async def enviar_handout(handout_id: str, body: EnviarHandoutRequest):
     h = supabase.table("gallery").select("id, name, type").eq("id", handout_id).limit(1).execute()
     if not h.data or h.data[0].get("type") != "handout":
@@ -2716,7 +2728,7 @@ class WorldEventRequest(BaseModel):
     faction_reputation_change: str = ""
     sets_flag_key: str = ""
 
-@app.post("/world-events")
+@app.post("/world-events", dependencies=MESTRE)
 async def criar_evento_mundo(req: WorldEventRequest):
     result = supabase.table("world_events").insert({
         "campaign_id": req.campaign_id,
@@ -2751,12 +2763,12 @@ class UpdateWorldEventRequest(BaseModel):
     consequences: str = None
 
 
-@app.delete("/world-events/{event_id}")
+@app.delete("/world-events/{event_id}", dependencies=MESTRE)
 async def deletar_evento_mundo(event_id: str):
     supabase.table("world_events").delete().eq("id", event_id).execute()
     return {"success": True}
 
-@app.post("/world-events/{event_id}/sugerir")
+@app.post("/world-events/{event_id}/sugerir", dependencies=MESTRE)
 async def sugerir_desdobramento(event_id: str):
     result = supabase.table("world_events").select("*").eq("id", event_id).single().execute()
     evento = result.data
@@ -2793,7 +2805,7 @@ async def get_presagios():
     except Exception as e:
         raise HTTPException(500, f"Erro ao buscar presságios: {str(e)}")
 
-@app.post("/presagios")
+@app.post("/presagios", dependencies=MESTRE)
 async def criar_presagio(data: dict = Body(...)):
     try:
         res = supabase.table("presagios").insert({
@@ -2805,7 +2817,7 @@ async def criar_presagio(data: dict = Body(...)):
     except Exception as e:
         raise HTTPException(500, f"Erro ao criar presságio: {str(e)}")
 
-@app.patch("/presagios/{id}/cumprir")
+@app.patch("/presagios/{id}/cumprir", dependencies=MESTRE)
 async def cumprir_presagio(id: str):
     try:
         res = supabase.table("presagios").update({"cumprido": True}).eq("id", id).execute()
@@ -2813,7 +2825,7 @@ async def cumprir_presagio(id: str):
     except Exception as e:
         raise HTTPException(500, f"Erro ao cumprir presságio: {str(e)}")
 
-@app.delete("/presagios/{id}")
+@app.delete("/presagios/{id}", dependencies=MESTRE)
 async def deletar_presagio(id: str):
     try:
         supabase.table("presagios").delete().eq("id", id).execute()
@@ -2821,7 +2833,7 @@ async def deletar_presagio(id: str):
     except Exception as e:
         raise HTTPException(500, f"Erro ao deletar presságio: {str(e)}")
 
-@app.patch("/bestiary/{id}/descoberto")
+@app.patch("/bestiary/{id}/descoberto", dependencies=MESTRE)
 async def toggle_descoberto(id: str, data: dict = Body(...)):
     try:
         res = supabase.table("bestiary").update({"discovered": data.get("discovered")}).eq("id", id).execute()
@@ -2856,7 +2868,7 @@ class AjusteReputacao(BaseModel):
     reason: str
 
 
-@app.post("/reputation/{tipo}/{entidade_id}")
+@app.post("/reputation/{tipo}/{entidade_id}", dependencies=MESTRE)
 def mudar_reputacao(tipo: str, entidade_id: str, body: AjusteReputacao):
     if tipo not in ("faction", "npc"):
         raise HTTPException(400, "Tipo inválido")
@@ -2878,7 +2890,7 @@ def historico_reputacao(tipo: str, entidade_id: str):
         .order("created_at", desc=True).limit(30).execute()
     return {"success": True, "data": res.data or []}
 
-@app.delete("/reputation/log/{log_id}")
+@app.delete("/reputation/log/{log_id}", dependencies=MESTRE)
 def deletar_log_reputacao(log_id: str):
     res = supabase.table("reputation_log").delete().eq("id", log_id).execute()
     if not res.data:
@@ -2913,7 +2925,7 @@ def propagar_consequencias_evento(evento, campaign_id):
         print(f"[AVISO] Falha ao propagar consequências: {e}")
 
 
-@app.patch("/world-events/{event_id}")
+@app.patch("/world-events/{event_id}", dependencies=MESTRE)
 def atualizar_evento_mundo(event_id: str, req: UpdateWorldEventRequest):
     updates = {k: v for k, v in req.dict().items() if v is not None}
     if not updates:
@@ -2976,7 +2988,7 @@ def listar_changelog(campaign_id: str):
         .order("created_at", desc=True).execute()
     return {"data": resp.data}
 
-@app.post("/world-changelog/{changelog_id}/marcar-lido-mestre")
+@app.post("/world-changelog/{changelog_id}/marcar-lido-mestre", dependencies=MESTRE)
 def marcar_changelog_lido_mestre(changelog_id: str):
     supabase.table("world_changelog").update({"visto_mestre": True}).eq("id", changelog_id).execute()
     return({"ok": True})
@@ -2988,7 +3000,7 @@ class FlagRequest(BaseModel):
     value: bool = False
     description: str = ""
 
-@app.post("/flags")
+@app.post("/flags", dependencies=MESTRE)
 async def criar_flag(req: FlagRequest):
     try:
         result = supabase.table("campaign_flags").insert({
@@ -3011,13 +3023,13 @@ async def listar_flags(campaign_id: str):
 class UpdateFlagRequest(BaseModel):
     value: bool
 
-@app.patch("/flags/{flag_id}")
+@app.patch("/flags/{flag_id}", dependencies=MESTRE)
 async def atualizar_flag(flag_id: str, req: UpdateFlagRequest):
     supabase.table("campaign_flags").update({"value": req.value}).eq("id", flag_id).execute()
     return {"success": True}
 
 
-@app.delete("/flags/{flag_id}")
+@app.delete("/flags/{flag_id}", dependencies=MESTRE)
 async def deletar_flag(flag_id: str):
     supabase.table("campaign_flags").delete().eq("id", flag_id).execute()
     return {"success": True}
@@ -3027,7 +3039,7 @@ class ArquivoMestreRequest(BaseModel):
     categoria: str
     texto: str
 
-@app.post("/arquivo-mestre")
+@app.post("/arquivo-mestre", dependencies=MESTRE)
 async def criar_arquivo_mestre(req: ArquivoMestreRequest):
     result = supabase.table("arquivo_mestre").insert({
         "campaign_id": req.campaign_id,
@@ -3043,7 +3055,7 @@ async def listar_arquivo_mestre(campaign_id: str):
     return {"success": True, "data": result.data}
 
 
-@app.delete("/arquivo-mestre/{item_id}")
+@app.delete("/arquivo-mestre/{item_id}", dependencies=MESTRE)
 async def deletar_arquivo_mestre(item_id: str):
     supabase.table("arquivo_mestre").delete().eq("id", item_id).execute()
     return {"success": True}
@@ -3053,7 +3065,7 @@ class ProphecyRequest(BaseModel):
     texto: str
     condicao: str
 
-@app.post("/prophecies")
+@app.post("/prophecies", dependencies=MESTRE)
 async def criar_profecia(req: ProphecyRequest):
     result = supabase.table("prophecies").insert({
         "campaign_id": req.campaign_id,
@@ -3072,13 +3084,13 @@ class UpdateProphecyRequest(BaseModel):
     status: str = None
     notas_cumprimento: str = None
 
-@app.patch("/prophecies/{prophecy_id}")
+@app.patch("/prophecies/{prophecy_id}", dependencies=MESTRE)
 async def atualizar_profecia(prophecy_id: str, req: UpdateProphecyRequest):
     updates = {k: v for k, v in req.dict().items() if v is not None}
     supabase.table("prophecies").update(updates).eq("id", prophecy_id).execute()
     return {"success": True}
 
-@app.delete("/prophecies/{prophecy_id}")
+@app.delete("/prophecies/{prophecy_id}", dependencies=MESTRE)
 async def deletar_profecia(prophecy_id: str):
     supabase.table("prophecies").delete().eq("id", prophecy_id).execute()
     return {"success": True}
@@ -3092,13 +3104,13 @@ class EventoRegional(BaseModel):
     modificadores: dict  # {"comida": 1.5, "armas": 1.3, "viagem": 0.6, "comercio": 0.7}
 
 
-@app.post("/economia/eventos")
+@app.post("/economia/eventos", dependencies=MESTRE)
 def criar_evento(evento: EventoRegional):
     resp = supabase.table("eventos_regionais").insert(evento.dict()).execute()
     return resp.data[0]
 
 
-@app.patch("/economia/eventos/{evento_id}/encerrar")
+@app.patch("/economia/eventos/{evento_id}/encerrar", dependencies=MESTRE)
 def encerrar_evento(evento_id: str):
     resp = supabase.table("eventos_regionais") \
         .update({"ativo": False}) \
@@ -3155,7 +3167,7 @@ def preco_atual(item_id: str, regiao: str, campaign_id: str):
         "motivo": " + ".join(motivos) if motivos else None,
     }
 
-@app.delete("/economia/eventos/{evento_id}")
+@app.delete("/economia/eventos/{evento_id}", dependencies=MESTRE)
 def deletar_evento(evento_id: str):
     resp = supabase.table("eventos_regionais").delete().eq("id", evento_id).execute()
     if not resp.data:
@@ -3181,14 +3193,14 @@ def listar_locais_para_viagem(campaign_id: str):
     return {"data": resp.data}
 
 
-@app.post("/viagem/iniciar")
+@app.post("/viagem/iniciar", dependencies=MESTRE)
 def iniciar_viagem(payload: IniciarViagem):
     viagem = payload.dict()
     resp = supabase.table("viagens").insert(viagem).execute()
     return resp.data[0]
 
 
-@app.post("/viagem/{viagem_id}/avancar")
+@app.post("/viagem/{viagem_id}/avancar", dependencies=MESTRE)
 def avancar_dia(viagem_id: str):
     viagem = supabase.table("viagens").select("*").eq("id", viagem_id).single().execute().data
     if not viagem:
@@ -3250,7 +3262,7 @@ def status_viagem(viagem_id: str):
         raise HTTPException(404, "Viagem não encontrada")
     return resp.data
 
-@app.delete("/viagem/{viagem_id}")
+@app.delete("/viagem/{viagem_id}", dependencies=MESTRE)
 def deletar_viagem(viagem_id: str):
     resp = supabase.table("viagens").delete().eq("id", viagem_id).execute()
     if not resp.data:
@@ -3278,7 +3290,7 @@ def get_secret_stages(campaign_id: str, npc_id: str):
     return {"data": r.data[0] if r.data else None}
 
 
-@app.post("/secret-stages")
+@app.post("/secret-stages", dependencies=MESTRE)
 def salvar_secret_stages(req: StagesReq):
     r = supabase.table("npc_secret_stages").upsert(
         {"campaign_id": req.campaign_id, "npc_id": req.npc_id, "stages": req.stages},
@@ -3287,7 +3299,7 @@ def salvar_secret_stages(req: StagesReq):
     return {"data": r.data[0]}
 
 
-@app.post("/secret-stages/gerar")
+@app.post("/secret-stages/gerar", dependencies=MESTRE)
 def gerar_secret_stages(req: GerarStagesReq):
     prompt = f"""
     Segredo do NPC {req.npc_name}: "{req.secret}"
@@ -3323,7 +3335,7 @@ def gerar_secret_stages(req: GerarStagesReq):
     return {"data": linhas[:3]}
 
 
-@app.post("/secret-stages/{stage_id}/avancar")
+@app.post("/secret-stages/{stage_id}/avancar", dependencies=MESTRE)
 def avancar_secret_stage(stage_id: str, req: AvancarSegredoReq):
     row = supabase.table("npc_secret_stages").select("*").eq("id", stage_id).single().execute().data
     if not row:
@@ -3346,7 +3358,7 @@ class GazetaEditReq(BaseModel):
     noticias: Optional[list] = None
 
 
-@app.post("/gazeta/gerar")
+@app.post("/gazeta/gerar", dependencies=MESTRE)
 def gerar_gazeta(req: GazetaGerarReq):
     cid = req.campaign_id
     partes = []
@@ -3447,7 +3459,7 @@ def gazeta_publicada(campaign_id: str):
     return {"data": r.data[0] if r.data else None}
 
 
-@app.patch("/gazeta/{gazeta_id}")
+@app.patch("/gazeta/{gazeta_id}", dependencies=MESTRE)
 def editar_gazeta(gazeta_id: str, req: GazetaEditReq):
     campos = {k: v for k, v in req.dict().items() if v is not None}
     if not campos:
@@ -3456,7 +3468,7 @@ def editar_gazeta(gazeta_id: str, req: GazetaEditReq):
     return {"data": r.data[0] if r.data else None}
 
 
-@app.post("/gazeta/{gazeta_id}/publicar")
+@app.post("/gazeta/{gazeta_id}/publicar", dependencies=MESTRE)
 def publicar_gazeta(gazeta_id: str):
     r = supabase.table("gazetas").update({
         "status": "publicada",
@@ -3467,7 +3479,7 @@ def publicar_gazeta(gazeta_id: str):
     return {"data": r.data[0]}
 
 
-@app.delete("/gazeta/{gazeta_id}")
+@app.delete("/gazeta/{gazeta_id}", dependencies=MESTRE)
 def deletar_gazeta(gazeta_id: str):
     supabase.table("gazetas").delete().eq("id", gazeta_id).execute()
     return {"ok": True}
@@ -3524,7 +3536,7 @@ def listar_downtime_pendentes(campaign_id: str):
     return {"data": r.data}
 
 
-@app.post("/downtime/{req_id}/resolver")
+@app.post("/downtime/{req_id}/resolver", dependencies=MESTRE)
 def resolver_downtime(req_id: str, req: DowntimeResolverReq):
     r = supabase.table("downtime_requests").update({
         "status": "aprovado" if req.aprovado else "rejeitado",
@@ -3564,7 +3576,7 @@ class ConsequenciaRevelarReq(BaseModel):
     personagem_ids: Optional[list[str]] = None
 
 
-@app.post("/consequencias/gerar")
+@app.post("/consequencias/gerar", dependencies=MESTRE)
 def gerar_consequencia_v2(req: ConsequenciaGerarReq):
     prompt = f"""Você é um mestre de D&D 5e criando um gancho narrativo de longo prazo.
 Ação dos jogadores: "{req.gatilho}"
@@ -3576,7 +3588,7 @@ Deve ser algo que os jogadores não podem prever, mas que faça sentido causal c
     return {"data": texto}
 
 
-@app.post("/consequencias")
+@app.post("/consequencias", dependencies=MESTRE)
 def criar_consequencia(req: ConsequenciaCriarReq):
     ultima = supabase.table("sessions").select("session_number") \
         .eq("campaign_id", req.campaign_id).order("session_number", desc=True).limit(1).execute().data
@@ -3628,7 +3640,7 @@ def consequencias_prontas(campaign_id: str):
     return {"data": prontas}
 
 
-@app.post("/consequencias/{cid}/revelar")
+@app.post("/consequencias/{cid}/revelar", dependencies=MESTRE)
 def revelar_consequencia(cid: str, req: ConsequenciaRevelarReq):
     c = supabase.table("consequencias_ocultas").select("*").eq("id", cid).single().execute().data
     if not c:
@@ -3657,7 +3669,7 @@ def revelar_consequencia(cid: str, req: ConsequenciaRevelarReq):
     return {"ok": True}
 
 
-@app.delete("/consequencias/{cid}")
+@app.delete("/consequencias/{cid}", dependencies=MESTRE)
 def deletar_consequencia(cid: str):
     supabase.table("consequencias_ocultas").delete().eq("id", cid).execute()
     return {"ok": True}
@@ -3672,13 +3684,13 @@ class MisterioNovo(BaseModel):
 class MisterioPistas(BaseModel):
     clues_found: int
 
-@app.get("/misterios")
+@app.get("/misterios", dependencies=[Depends(exigir_mestre)])
 def listar_misterios():
     res = supabase.table("mysteries").select("*, npcs(name), locations(name)") \
         .eq("campaign_id", CAMPANHA_ID).order("created_at", desc=True).execute()
     return {"success": True, "data": res.data or []}
 
-@app.post("/misterios")
+@app.post("/misterios", dependencies=[Depends(exigir_mestre)])
 def criar_misterio(body: MisterioNovo):
     titulo = body.title.strip()
     if not titulo:
@@ -3693,7 +3705,7 @@ def criar_misterio(body: MisterioNovo):
     }).execute()
     return {"success": True, "data": res.data[0]}
 
-@app.put("/misterios/{misterio_id}/pistas")
+@app.put("/misterios/{misterio_id}/pistas", dependencies=[Depends(exigir_mestre)])
 def atualizar_pistas(misterio_id: str, body: MisterioPistas):
     atual = supabase.table("mysteries").select("clues_total") \
         .eq("id", misterio_id).eq("campaign_id", CAMPANHA_ID).limit(1).execute()
@@ -3707,7 +3719,7 @@ def atualizar_pistas(misterio_id: str, body: MisterioPistas):
     }).eq("id", misterio_id).eq("campaign_id", CAMPANHA_ID).execute()
     return {"success": True, "data": res.data[0]}
 
-@app.delete("/misterios/{misterio_id}")
+@app.delete("/misterios/{misterio_id}", dependencies=[Depends(exigir_mestre)])
 def deletar_misterio(misterio_id: str):
     supabase.table("mysteries").delete() \
         .eq("id", misterio_id).eq("campaign_id", CAMPANHA_ID).execute()
@@ -3725,7 +3737,7 @@ class NotaEdit(BaseModel):
     color: str | None = None
 
 
-@app.get("/notas-sessao")
+@app.get("/notas-sessao", dependencies=[Depends(exigir_mestre)])
 def listar_notas():
     res = supabase.table("session_notes").select("*") \
         .eq("campaign_id", CAMPANHA_ID).eq("done", False) \
@@ -3733,7 +3745,7 @@ def listar_notas():
     return {"success": True, "data": res.data or []}
 
 
-@app.post("/notas-sessao")
+@app.post("/notas-sessao", dependencies=[Depends(exigir_mestre)])
 def criar_nota(body: NotaNova):
     texto = body.text.strip()
     if not texto:
@@ -3746,7 +3758,7 @@ def criar_nota(body: NotaNova):
     return {"success": True, "data": res.data[0]}
 
 
-@app.patch("/notas-sessao/{nota_id}")
+@app.patch("/notas-sessao/{nota_id}", dependencies=[Depends(exigir_mestre)])
 def editar_nota(nota_id: str, body: NotaEdit):
     updates = {}
     if body.done is not None:
@@ -3764,14 +3776,14 @@ def editar_nota(nota_id: str, body: NotaEdit):
     return {"success": True}
 
 
-@app.delete("/notas-sessao/{nota_id}")
+@app.delete("/notas-sessao/{nota_id}", dependencies=[Depends(exigir_mestre)])
 def apagar_nota(nota_id: str):
     supabase.table("session_notes").delete() \
         .eq("id", nota_id).eq("campaign_id", CAMPANHA_ID).execute()
     return {"success": True}
 
 
-@app.post("/notas-sessao/encerrar-sessao")
+@app.post("/notas-sessao/encerrar-sessao", dependencies=[Depends(exigir_mestre)])
 def encerrar_sessao_notas():
     res = supabase.table("session_notes").select("id, sessions_left") \
         .eq("campaign_id", CAMPANHA_ID).eq("done", False).gt("sessions_left", 0).execute()
