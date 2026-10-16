@@ -8,7 +8,7 @@ import tempfile
 import urllib.parse
 from pywebpush import webpush, WebPushException
 from google.genai.errors import ServerError, ClientError
-from fastapi import FastAPI, HTTPException, UploadFile, File, Request, Body
+from fastapi import FastAPI, HTTPException, UploadFile, File, Request, Body, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from typing import Optional
