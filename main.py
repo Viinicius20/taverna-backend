@@ -888,9 +888,9 @@ async def get_sessions(campaign_id: str):
         raise HTTPException(500, f"Erro ao buscar sessões: {str(e)}")
 
 
-@app.get("/boato", dependencies=[Depends(usuario_atual)])
-def gerar_boato():   # def, não async def: as chamadas ao Supabase e ao Gemini são bloqueantes
-    # Busca contexto do mundo atual
+@app.get("/boato")
+@limiter.limit("10/minute")
+def gerar_boato(request: Request):
     eventos_ativos = supabase.table("world_events").select("name, description, progress") \
         .eq("campaign_id", CAMPANHA_ID).eq("status", "ativo").execute().data
     eventos_concluidos = supabase.table("world_events").select("name, consequences") \
@@ -1050,7 +1050,8 @@ class RulesRequest(BaseModel):
     system: str = "D&D 5e"
 
 @app.post('/spells/homebrew', dependencies=[Depends(usuario_atual)])
-async def create_homebrew_spell(req: HombrewSpellRequest):
+@limiter.limit("5/minute")
+def create_homebrew_spell(request: Request, req: HombrewSpellRequest):
     prompt = f"""
     Você é um criador de conteúdo D&D 5e expert.
 
@@ -1109,7 +1110,8 @@ class ManualSpellRequest(BaseModel):
     components: str = ""
 
 @app.post('/spells/manual', dependencies=[Depends(usuario_atual)])
-async def create_manual_spell(req: ManualSpellRequest):
+@limiter.limit("5/minute")
+def create_manual_spell(request: Request, req: ManualSpellRequest):
     if not req.name.strip():
         raise HTTPException(400, "Nome da magia é obrigatório")
 

@@ -1,13 +1,14 @@
 import os
 import json
 import uuid
-import time
 import random
 import string
 import tempfile
 import urllib.parse
 from fastapi import Depends
-from auth import hash_senha, confere_senha, criar_token, usuario_atual, exigir_mestre
+from servicos import ajustar_reputacao, propagar_consequencias_evento
+from ia import gerar_texto_com_gemini, gerar_json_com_gemini
+from auth import confere_senha, criar_token, exigir_mestre, MESTRE
 from pywebpush import webpush, WebPushException
 from google.genai.errors import ServerError, ClientError
 from fastapi import FastAPI, HTTPException, UploadFile, File, Request, Body, Form
@@ -22,12 +23,12 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from datetime import datetime
 from utils import limpar_texto
-from utils import estado_por_pontos, delta_do_evento, MAXIMO
+from utils import MAXIMO
 from core import supabase, CAMPANHA_ID
-from routers import wiki, fatos, diario, tv
+from routers import wiki, fatos, diario, tv, mundo_vivo, mundo_fisico
+from auth import usuario_opcional
 
 
-MESTRE = [Depends(exigir_mestre)]
 VELOCIDADE_KM_DIA = 40
 CHANCE_EVENTO_POR_DIA = 0.35
 
@@ -142,6 +143,8 @@ app.include_router(fatos.router)
 app.include_router(diario.router)
 app.include_router(tv.router)
 
+app.include_router(mundo_vivo.router)
+app.include_router(mundo_fisico.router)
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 MODELOS_GEMINI = ["gemini-2.5-flash", "gemini-3.6-flash"]
@@ -206,56 +209,6 @@ class DeletarArteRequest(BaseModel):
 class EncerrarSessaoRequest(BaseModel):
     campaign_id: str
     title: str = ""
-
-# ===================== FUNÇÃO AUXILIAR GEMINI =====================
-
-GEMINI_KEYS = [
-    os.getenv("GEMINI_API_KEY"),
-    os.getenv("GEMINI_API_KEY_3"),
-    os.getenv("GEMINI_API_KEY_2"),
-    os.getenv("GEMINI_API_KEY_4"),
-]
-
-
-def gerar_json_com_gemini(prompt: str, max_retries=3) -> dict:
-    last_error = None
-
-    for key in GEMINI_KEYS:
-        if not key:
-            continue
-        client_atual = genai.Client(api_key=key)
-
-        for tentativa in range(max_retries):
-            try:
-                response = client_atual.models.generate_content(
-                    model="gemini-2.5-flash",
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        temperature=0.7,
-                        response_mime_type="application/json"
-                    )
-                )
-                text = response.text.strip()
-                if text.startswith("```json"):
-                    text = text[7:-3].strip()
-                return json.loads(text)
-
-            except Exception as e:
-                err_str = str(e)
-                if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
-                    print(f"[IA] Quota esgotada na key, tentando próxima...")
-                    last_error = e
-                    break  # vai pra próxima key
-                elif "503" in err_str or "UNAVAILABLE" in err_str:
-                    last_error = e
-                    print(f"[IA] 503 tentativa {tentativa+1}/{max_retries}")
-                    time.sleep(2 * (tentativa + 1))
-                else:
-                    last_error = e
-                    break
-
-    raise last_error
-
 
 # ===================== ENDPOINTS =====================
 
@@ -412,7 +365,7 @@ class LootRequest(BaseModel):
     quantidade_magicos: int = 1
     contexto: str = ""
 
-@app.post("/loot/generate")
+@app.post("/loot/generate", dependencies=MESTRE)
 async def generate_loot(req: LootRequest):
     prompt = f"""Você é um mestre de D&D 5e experiente.
 Gere uma lista de itens de loot para um grupo de nível {req.nivel_medio}.
@@ -447,50 +400,6 @@ Itens mágicos: apropriados pro nível {req.nivel_medio}, criativos e únicos.""
     except Exception as e:
         print(f"ERRO LOOT: {e}")
         raise HTTPException(500, {"error": f"Erro ao gerar loot: {str(e)}"})
-
-def gerar_texto_com_gemini(parts_ou_prompt, max_retries=3):
-    last_error = None
-    contents = parts_ou_prompt if isinstance(parts_ou_prompt, list) else parts_ou_prompt
-
-    for idx, key in enumerate(GEMINI_KEYS):
-        if not key:
-            continue
-        client_atual = genai.Client(api_key=key)
-
-        for tentativa in range(max_retries):
-            try:
-                if isinstance(parts_ou_prompt, list):
-                    response = client_atual.models.generate_content(
-                        model="gemini-2.5-flash",
-                        contents=[{"role": "user", "parts": parts_ou_prompt}]
-                    )
-                else:
-                    response = client_atual.models.generate_content(
-                        model="gemini-2.5-flash",
-                        contents=parts_ou_prompt,
-                        config=types.GenerateContentConfig(
-                            temperature=0.7,
-                            response_mime_type="application/json"
-                        )
-                    )
-                return response.text.strip()
-
-            except Exception as e:
-                err_str = str(e)
-                if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
-                    print(f"[IA] Key {idx+1}: quota esgotada, indo pra próxima key...")
-                    last_error = e
-                    break
-                elif "503" in err_str or "UNAVAILABLE" in err_str:
-                    last_error = e
-                    print(f"[IA] Key {idx+1}: 503 (tentativa {tentativa+1}/{max_retries})")
-                    time.sleep(2 * (tentativa + 1))
-                else:
-                    last_error = e
-                    print(f"[IA] Key {idx+1}: erro não tratado — {err_str[:200]}")
-                    break
-
-    raise last_error
 
 
 @app.post("/level-up")
@@ -709,7 +618,7 @@ Retorne APENAS o JSON, sem explicações.
         raise HTTPException(500, f"Erro ao processar PDF: {str(e)}")
 
 
-@app.post("/upload-pdf-npc")
+@app.post("/upload-pdf-npc", dependencies=MESTRE)
 async def upload_pdf_npc(file: UploadFile = File(...), system: str = "D&D 5e", campaign_id: str = ""):
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(400, "Arquivo deve ser PDF")
@@ -825,7 +734,7 @@ async def delete_character(character_id: str):
     except Exception as e:
         raise HTTPException(500, f"Erro ao deletar personagem: {str(e)}")
 
-@app.post("/npcs")
+@app.post("/npcs", dependencies=MESTRE)
 async def create_npc(campaign_id: str, description: str, system: str = "D&D 5e"):
     print(f"DEBUG: START create_npc")
     prompt = f"""
@@ -896,7 +805,7 @@ async def list_npcs(campaign_id: str):
         raise HTTPException(500, f"Erro ao buscar NPCs: {str(e)}")
 
 
-@app.delete("/npcs/{npc_id}")
+@app.delete("/npcs/{npc_id}", dependencies=MESTRE)
 async def delete_npc(npc_id: str):
     try:
         supabase.table("npcs").delete().eq("id", npc_id).execute()
@@ -1047,7 +956,7 @@ Retorne APENAS um JSON: {{"boato": "frase curta", "fonte": "quem espalha"}}"""
         print(f"ERRO BOATO: {e}")
         raise HTTPException(500, f"Erro ao gerar boato: {str(e)}")
 
-@app.patch("/magic-items/{item_id}/revelar")
+@app.patch("/magic-items/{item_id}/revelar", dependencies=MESTRE)
 async def revelar_item(item_id: str):
     try:
         supabase.table("magic_items").update({"identificado": True}).eq("id", item_id).execute()
@@ -1055,7 +964,7 @@ async def revelar_item(item_id: str):
     except Exception as e:
         raise HTTPException(500, f"Erro ao revelar item: {str(e)}")
 
-@app.post("/sessions")
+@app.post("/sessions", dependencies=MESTRE)
 async def create_session(req: SessionRequest):
     try:
         data = {
@@ -1069,7 +978,7 @@ async def create_session(req: SessionRequest):
     except Exception as e:
         raise HTTPException(500, f"Erro ao criar sessão: {str(e)}")
 
-@app.delete("/sessions/{session_id}")
+@app.delete("/sessions/{session_id}", dependencies=MESTRE)
 async def delete_session(session_id: str):
     try:
         supabase.table("sessions").delete().eq("id", session_id).execute()
@@ -1077,7 +986,7 @@ async def delete_session(session_id: str):
     except Exception as e:
         raise HTTPException(500, f"Erro ao deletar sessão: {str(e)}")
 
-@app.post("/session-state/{campaign_id}/countdown")
+@app.post("/session-state/{campaign_id}/countdown", dependencies=MESTRE)
 async def set_countdown(campaign_id: str, active: bool, duration: int = 60):
     try:
         from datetime import datetime, timedelta
@@ -1099,7 +1008,7 @@ async def set_countdown(campaign_id: str, active: bool, duration: int = 60):
         raise HTTPException(500, f"Erro ao atualizar countdown: {str(e)}")
 
 
-@app.post("/magic-items/homebrew")
+@app.post("/magic-items/homebrew", dependencies=MESTRE)
 async def create_homebrew_item(req: MagicItemRequest):
     rarity_instruction = f'A raridade DEVE ser exatamente "{req.rarity}".' if req.rarity else 'Escolha a raridade adequada ao lore do item.'
 
@@ -1223,7 +1132,7 @@ async def create_manual_spell(req: ManualSpellRequest):
         'message': f"Magia '{req.name}' criada com sucesso!"
     }
 
-@app.post("/rules/search")
+@app.post("/rules/search", dependencies=MESTRE)
 async def search_rules(req: RulesRequest):
     prompt = f"""Você é um especialista em {req.system}.
 O mestre perguntou: "{req.query}"
@@ -1259,7 +1168,7 @@ class EncountroRequest(BaseModel):
     contexto: str = ""
     usar_mundo: bool = True
 
-@app.post("/encounter/generate")
+@app.post("/encounter/generate", dependencies=MESTRE)
 async def generate_encounter(req: EncountroRequest):
     contexto_mundo = ""
     if req.usar_mundo:
@@ -1331,7 +1240,7 @@ class SecretMessageRequest(BaseModel):
     message: str
 
 
-@app.post("/secret-messages")
+@app.post("/secret-messages", dependencies=MESTRE)
 async def send_secret_message(req: SecretMessageRequest):
     try:
         data = {
@@ -1368,7 +1277,8 @@ class ProfileLoginRequest(BaseModel):
 
 
 @app.post("/profiles/login")
-async def profile_login(req: ProfileLoginRequest):
+@limiter.limit("8/minute")
+def profile_login(request: Request, req: ProfileLoginRequest):
     try:
         res = supabase.table("profiles").select("*").eq("username", req.username).execute()
 
@@ -1418,7 +1328,7 @@ async def mark_as_read(message_id: str):
     except Exception as e:
         raise HTTPException(500, f"Erro ao marcar mensagem: {str(e)}")
 
-@app.delete("/magic-items/{item_id}")
+@app.delete("/magic-items/{item_id}", dependencies=MESTRE)
 async def delete_magic_item(item_id: str):
     try:
         print(f"Deletando item: {item_id}")
@@ -1437,7 +1347,7 @@ async def patch_character(character_id: str, req: dict = Body(...)):
         raise HTTPException(500, f"Erro ao atualizar: {str(e)}")
 
 
-@app.get("/bestiary")
+@app.get("/bestiary", dependencies=MESTRE)
 async def get_bestiary(name: str = "", cr: str = "", type: str = ""):
     try:
         query = supabase.table("bestiary").select("*")
@@ -1453,7 +1363,7 @@ async def get_bestiary(name: str = "", cr: str = "", type: str = ""):
         raise HTTPException(500, f"Erro ao buscar bestiário: {str(e)}")
 
 
-@app.post("/bestiary/generate")
+@app.post("/bestiary/generate", dependencies=MESTRE)
 @limiter.limit("10/minute")
 async def generate_bestiary(request: Request, nome: str, cr: str = "", tipo: str = "", descricao: str = ""):
     cr_instruction = f'O CR DEVE ser exatamente "{cr}".' if cr else 'Escolha o CR adequado.'
@@ -1522,7 +1432,7 @@ Retorne APENAS um JSON válido:
         raise HTTPException(500, f"Erro ao gerar monstro: {str(e)}")
 
 
-@app.delete("/bestiary/{monster_id}")
+@app.delete("/bestiary/{monster_id}", dependencies=MESTRE)
 async def delete_monster(monster_id: str):
     try:
         supabase.table("bestiary").delete().eq("id", monster_id).execute()
@@ -1531,7 +1441,7 @@ async def delete_monster(monster_id: str):
         raise HTTPException(500, f"Erro ao deletar monstro: {str(e)}")
 
 
-@app.post("/gallery/upload")
+@app.post("/gallery/upload", dependencies=MESTRE)
 async def upload_gallery(
         file: UploadFile = File(...),
         campaign_id: str = "",
@@ -1569,18 +1479,20 @@ async def upload_gallery(
 
 
 @app.get("/gallery")
-async def get_gallery(campaign_id: str = ""):
+async def get_gallery(campaign_id: str = "", user: Optional[dict] = Depends(usuario_opcional)):
     try:
         query = supabase.table("gallery").select("*").order("created_at", desc=True)
         if campaign_id:
             query = query.eq("campaign_id", campaign_id)
-        res = query.execute()
-        return {"success": True, "data": res.data}
+        dados = query.execute().data or []
+        if not user or user.get("role") != "mestre":
+            dados = [i for i in dados if i.get("revealed")]
+        return {"success": True, "data": dados}
     except Exception as e:
         raise HTTPException(500, f"Erro ao buscar galeria: {str(e)}")
 
 
-@app.patch("/gallery/{image_id}/reveal")
+@app.patch("/gallery/{image_id}/reveal", dependencies=MESTRE)
 async def reveal_image(image_id: str):
     try:
         supabase.table("gallery").update({"revealed": False}) \
@@ -1593,7 +1505,7 @@ async def reveal_image(image_id: str):
         raise HTTPException(500, f"Erro ao revelar imagem: {str(e)}")
 
 
-@app.patch("/gallery/{image_id}/hide")
+@app.patch("/gallery/{image_id}/hide", dependencies=MESTRE)
 async def hide_image(image_id: str):
     try:
         res = supabase.table("gallery").update({"revealed": False}).eq("id", image_id).execute()
@@ -1602,7 +1514,7 @@ async def hide_image(image_id: str):
         raise HTTPException(500, f"Erro ao esconder imagem: {str(e)}")
 
 
-@app.delete("/gallery/{image_id}")
+@app.delete("/gallery/{image_id}", dependencies=MESTRE)
 def delete_gallery_image(image_id: str):
     try:
         res = supabase.table("gallery").select("*").eq("id", image_id).limit(1).execute()
@@ -1632,7 +1544,7 @@ async def get_map_tokens(campaign_id: str):
     except Exception as e:
         raise HTTPException(500, f"Erro ao buscar tokens: {str(e)}")
 
-@app.post("/map-tokens")
+@app.post("/map-tokens", dependencies=MESTRE)
 async def add_map_token(data: dict = Body(...)):
     try:
         res = supabase.table("map_tokens").insert(data).execute()
@@ -1640,7 +1552,7 @@ async def add_map_token(data: dict = Body(...)):
     except Exception as e:
         raise HTTPException(500, f"Erro ao adicionar token: {str(e)}")
 
-@app.patch("/map-tokens/{token_id}/position")
+@app.patch("/map-tokens/{token_id}/position", dependencies=MESTRE)
 async def update_token_position(token_id: str, data: dict = Body(...)):
     try:
         res = supabase.table("map_tokens").update({"x": data["x"], "y": data["y"]}).eq("id", token_id).execute()
@@ -1648,7 +1560,7 @@ async def update_token_position(token_id: str, data: dict = Body(...)):
     except Exception as e:
         raise HTTPException(500, f"Erro ao mover token: {str(e)}")
 
-@app.patch("/map-tokens/{token_id}/label")
+@app.patch("/map-tokens/{token_id}/label", dependencies=MESTRE)
 async def update_token_label(token_id: str, data: dict = Body(...)):
     try:
         res = supabase.table("map_tokens").update({"label": data["label"]}).eq("id", token_id).execute()
@@ -1656,7 +1568,7 @@ async def update_token_label(token_id: str, data: dict = Body(...)):
     except Exception as e:
         raise HTTPException(500, f"Erro ao atualizar label: {str(e)}")
 
-@app.patch("/map-tokens/{token_id}/rotation")
+@app.patch("/map-tokens/{token_id}/rotation", dependencies=MESTRE)
 async def update_token_rotation(token_id: str, data: dict = Body(...)):
     try:
         res = supabase.table("map_tokens").update({"rotation": data["rotation"]}).eq("id", token_id).execute()
@@ -1664,7 +1576,7 @@ async def update_token_rotation(token_id: str, data: dict = Body(...)):
     except Exception as e:
         raise HTTPException(500, f"Erro ao rotacionar token: {str(e)}")
 
-@app.patch("/map-tokens/{token_id}/scale")
+@app.patch("/map-tokens/{token_id}/scale", dependencies=MESTRE)
 async def update_token_scale(token_id: str, data: dict = Body(...)):
     try:
         res = supabase.table("map_tokens").update({"scale": data["scale"]}).eq("id", token_id).execute()
@@ -1672,7 +1584,7 @@ async def update_token_scale(token_id: str, data: dict = Body(...)):
     except Exception as e:
         raise HTTPException(500, f"Erro ao escalar token: {str(e)}")
 
-@app.delete("/map-tokens/{token_id}")
+@app.delete("/map-tokens/{token_id}", dependencies=MESTRE)
 async def delete_map_token(token_id: str):
     try:
         supabase.table("map_tokens").delete().eq("id", token_id).execute()
@@ -1685,7 +1597,7 @@ def gerar_codigo_campanha():
     return ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
 
 
-@app.post("/campaigns")
+@app.post("/campaigns", dependencies=MESTRE)
 async def criar_campanha(data: dict = Body(...)):
     try:
         codigo = gerar_codigo_campanha()
@@ -1901,16 +1813,8 @@ async def enviar_push_notification(user_id: str, titulo: str, mensagem: str):
     except Exception as e:
         print(f"Erro no push notification: {str(e)}")
 
-@app.get("/debug/vapid")
-async def debug_vapid():
-    return {
-        "public_key_exists": bool(VAPID_PUBLIC_KEY),
-        "private_key_exists": bool(VAPID_PRIVATE_KEY),
-        "public_key_preview": VAPID_PUBLIC_KEY[:20] if VAPID_PUBLIC_KEY else None
-    }
 
-
-@app.get("/bestiary/random-description")
+@app.get("/bestiary/random-description", dependencies=MESTRE)
 def bestiary_random_description():
     try:
         res = supabase.table("bestiary").select("name, type, cr, description").execute()
@@ -2037,7 +1941,7 @@ def montar_prompt_imagem_item(descricao_pt):
         return descricao_pt
 
 
-@app.post("/gerar-arte")
+@app.post("/gerar-arte", dependencies=MESTRE)
 async def gerar_arte(req: GerarArteRequest):
 
     if req.tipo == "npc":
@@ -2090,7 +1994,7 @@ async def gerar_arte(req: GerarArteRequest):
 
     return {"success": True, "art_url": image_url}
 
-@app.post("/deletar-arte")
+@app.post("/deletar-arte", dependencies=MESTRE)
 async def deletar_arte(req: DeletarArteRequest):
     if req.tipo == "npc":
         result = supabase.table("npcs").select("*").eq("id", req.id).single().execute()
@@ -2109,7 +2013,7 @@ async def deletar_arte(req: DeletarArteRequest):
 
     return {"success": True}
 
-@app.post("/sessions/encerrar")
+@app.post("/sessions/encerrar", dependencies=MESTRE)
 async def encerrar_sessao(req: EncerrarSessaoRequest):
     ultimas = supabase.table("sessions").select("*").eq("campaign_id", req.campaign_id).order("session_number", desc=True).limit(1).execute()
     ultimo_numero = ultimas.data[0]["session_number"] if ultimas.data else 0
@@ -2225,88 +2129,12 @@ async def encerrar_sessao(req: EncerrarSessaoRequest):
 
     return {"success": True, "summary": resumo, "session_number": novo_numero, "eventos_avancados": eventos_avancados}
 
-@app.get("/world-log/{campaign_id}")
-async def listar_world_log(campaign_id: str):
-    result = supabase.table("world_log").select("*").eq("campaign_id", campaign_id).order("created_at", desc=True).execute()
-    return {"success": True, "data": result.data}
-
-@app.delete("/world-log/{log_id}")
-def deletar_world_log(log_id: str):
-    resp = supabase.table("world_log").delete().eq("id", log_id).execute()
-    if not resp.data:
-        raise HTTPException(404, "Registro não encontrado")
-    return {"ok": True}
-
-class FactionRequest(BaseModel):
-    campaign_id: str
-    description: str
-    system: str = "D&D 5e"
-
-@app.post("/factions/generate")
-async def gerar_faccao(req: FactionRequest):
-    prompt = f"""
-    Você é um mestre de RPG criando uma facção para o mundo de campanha.
-    Sistema: {req.system}
-    Descrição fornecida pelo mestre: {req.description}
-
-    Retorne APENAS um JSON:
-    {{
-      "name": "Nome da Facção",
-      "type": "guilda/ordem/reino/culto/outro",
-      "description": "Descrição curta da facção, seus valores e estrutura",
-      "goals": "Objetivos atuais da facção no mundo"
-    }}
-    """
-    try:
-        raw = gerar_texto_com_gemini(prompt)
-        raw = raw.replace("```json", "").replace("```", "").strip()
-        faction_data = json.loads(raw)
-
-        result = supabase.table("factions").insert({
-            "campaign_id": req.campaign_id,
-            "name": faction_data.get("name"),
-            "type": faction_data.get("type"),
-            "description": faction_data.get("description"),
-            "goals": faction_data.get("goals"),
-            "reputation": "neutra",
-            "is_homebrew": True
-        }).execute()
-
-        return {"success": True, "data": result.data[0] if result.data else None}
-    except Exception as e:
-        raise HTTPException(500, f"Erro ao gerar facção: {str(e)}")
-
-
-@app.get("/factions/{campaign_id}")
-async def listar_faccoes(campaign_id: str):
-    result = supabase.table("factions").select("*").eq("campaign_id", campaign_id).order("name").execute()
-    return {"success": True, "data": result.data}
-
-
-class UpdateFactionRequest(BaseModel):
-    name: str = None
-    type: str = None
-    description: str = None
-    goals: str = None
-    reputation: str = None
-
-@app.patch("/factions/{faction_id}")
-async def atualizar_faccao(faction_id: str, req: UpdateFactionRequest):
-    updates = {k: v for k, v in req.dict().items() if v is not None}
-    supabase.table("factions").update(updates).eq("id", faction_id).execute()
-    return {"success": True}
-
-
-@app.delete("/factions/{faction_id}")
-async def deletar_faccao(faction_id: str):
-    supabase.table("factions").delete().eq("id", faction_id).execute()
-    return {"success": True}
 
 class DescricaoContextualRequest(BaseModel):
     contexto: str
     system: str = "D&D 5e"
 
-@app.post("/gerar-descricao-contextual")
+@app.post("/gerar-descricao-contextual", dependencies=MESTRE)
 async def gerar_descricao_contextual(req: DescricaoContextualRequest):
     prompt = f"""
     Você é um mestre de RPG narrando uma cena para os jogadores.
@@ -2331,7 +2159,7 @@ class ConsequenciaRequest(BaseModel):
     situacao: str
     system: str = "D&D 5e"
 
-@app.post("/gerar-consequencia")
+@app.post("/gerar-consequencia", dependencies=MESTRE)
 async def gerar_consequencia(req: ConsequenciaRequest):
     prompt = f"""
     Você é um mestre de RPG experiente ajudando outro mestre a improvisar.
@@ -2358,50 +2186,12 @@ async def gerar_consequencia(req: ConsequenciaRequest):
     except Exception as e:
         raise HTTPException(500, f"Erro ao gerar consequência: {str(e)}")
 
-class ConsequenciaSugerirReq(BaseModel):
-    gatilho: str
-
-
-@app.post("/consequencias/sugerir")
-def sugerir_consequencias(req: ConsequenciaSugerirReq):
-    prompt = f"""Você é um mestre de D&D 5e criando ganchos narrativos de longo prazo.
-Ação dos jogadores: "{req.gatilho}"
-
-Proponha exatamente 3 consequências ocultas DIFERENTES entre si, que só serão reveladas mais tarde, nesta ordem:
-1) uma social ou política (reputação, alianças, facções, poder);
-2) uma misteriosa ou sobrenatural (algo escondido que reage à ação);
-3) uma pessoal ou material (alguém próximo, um item, uma perda ou dívida).
-
-Cada uma com 1-2 frases, ligada de forma causal à ação, e impossível de os jogadores preverem.
-Retorne APENAS um JSON válido: um array com 3 strings. Sem markdown."""
-
-    texto = gerar_texto_com_gemini(prompt).strip().replace("```json", "").replace("```", "").strip()
-
-    opcoes = None
-    try:
-        parsed = json.loads(texto)
-        if isinstance(parsed, list):
-            opcoes = [str(x).strip() for x in parsed if str(x).strip()]
-    except Exception:
-        pass
-
-    if not opcoes:
-        opcoes = [
-            l.strip().strip('[]",\'-•* ').lstrip("0123456789.) ").strip()
-            for l in texto.split("\n")
-            if l.strip() and l.strip() not in ("[", "]")
-        ]
-
-    if len(opcoes) < 3:
-        raise HTTPException(502, "A IA não retornou as 3 opções.")
-    return {"data": opcoes[:3]}
-
 
 class MemoriaNpcRequest(BaseModel):
     npc_id: str
     evento: str
 
-@app.post("/npcs/memoria")
+@app.post("/npcs/memoria", dependencies=MESTRE)
 async def adicionar_memoria_npc(req: MemoriaNpcRequest):
     result = supabase.table("npcs").select("*").eq("id", req.npc_id).single().execute()
     npc = result.data
@@ -2422,7 +2212,7 @@ class SugestaoNpcRequest(BaseModel):
     situacao_atual: str = ""
     mood: str = "neutro"
 
-@app.post("/npcs/sugerir-acao")
+@app.post("/npcs/sugerir-acao", dependencies=MESTRE)
 async def sugerir_acao_npc(req: SugestaoNpcRequest):
     mood = HUMOR_DESC.get(req.mood, HUMOR_DESC["neutro"])
     result = supabase.table("npcs").select("*").eq("id", req.npc_id).limit(1).execute()
@@ -2463,7 +2253,7 @@ class RemoverMemoriaRequest(BaseModel):
     npc_id: str
     index: int
 
-@app.post("/npcs/memoria/remover")
+@app.post("/npcs/memoria/remover", dependencies=MESTRE)
 async def remover_memoria_npc(req: RemoverMemoriaRequest):
     result = supabase.table("npcs").select("*").eq("id", req.npc_id).single().execute()
     npc = result.data
@@ -2535,78 +2325,6 @@ async def verificar_conhecimento(req: ConhecimentoRequest):
     except Exception as e:
         raise HTTPException(500, f"Erro ao verificar conhecimento: {str(e)}")
 
-class LocationRequest(BaseModel):
-    campaign_id: str
-    description: str
-    system: str = "D&D 5e"
-
-@app.post("/locations/generate")
-async def gerar_local(req: LocationRequest):
-    prompt = f"""
-    Você é um mestre de RPG criando um local para o mundo de campanha.
-    Sistema: {req.system}
-    Descrição fornecida: {req.description}
-
-    Retorne APENAS um JSON:
-    {{
-      "name": "Nome do Local",
-      "type": "cidade/vila/masmorra/floresta/ruína/outro",
-      "description": "Descrição geral do local, atmosfera e aparência",
-      "region_info": "Clima, geografia e cultura da região",
-      "commerce": "O que é comum encontrar à venda ou negociar aqui",
-      "monsters": "Criaturas ou perigos comuns na região",
-      "quests": "2-3 ideias de missão ou situação que fazem sentido aqui",
-      "language": "Idioma mais falado no local",
-      "avg_level": "Faixa de nível recomendada para aventureiros (ex: 3-5)",
-      "boss": "Uma possível ameaça principal ou chefe local, se fizer sentido (ou vazio se não)"
-    }}
-    """
-    try:
-        raw = gerar_texto_com_gemini(prompt)
-        raw = raw.replace("```json", "").replace("```", "").strip()
-        loc_data = json.loads(raw)
-
-        result = supabase.table("locations").insert({
-            "campaign_id": req.campaign_id,
-            "name": loc_data.get("name"),
-            "type": loc_data.get("type"),
-            "description": loc_data.get("description"),
-            "region_info": loc_data.get("region_info"),
-            "commerce": loc_data.get("commerce"),
-            "monsters": loc_data.get("monsters"),
-            "quests": loc_data.get("quests"),
-            "language": loc_data.get("language"),
-            "avg_level": loc_data.get("avg_level"),
-            "boss": loc_data.get("boss"),
-            "is_homebrew": True
-        }).execute()
-
-        return {"success": True, "data": result.data[0] if result.data else None}
-    except Exception as e:
-        raise HTTPException(500, f"Erro ao gerar local: {str(e)}")
-
-
-@app.get("/locations/{campaign_id}")
-async def listar_locais(campaign_id: str):
-    result = supabase.table("locations").select("*").eq("campaign_id", campaign_id).order("name").execute()
-    return {"success": True, "data": result.data}
-
-
-class UpdateLocationRequest(BaseModel):
-    faction_id: str = None
-    name: str = None
-
-@app.patch("/locations/{location_id}")
-async def atualizar_local(location_id: str, req: UpdateLocationRequest):
-    updates = {k: v for k, v in req.dict().items() if v is not None}
-    supabase.table("locations").update(updates).eq("id", location_id).execute()
-    return {"success": True}
-
-
-@app.delete("/locations/{location_id}")
-async def deletar_local(location_id: str):
-    supabase.table("locations").delete().eq("id", location_id).execute()
-    return {"success": True}
 
 class HandoutRequest(BaseModel):
     campaign_id: str
@@ -2615,7 +2333,7 @@ class HandoutRequest(BaseModel):
     remetente: str = ""
 
 
-@app.post("/gallery/gerar-handout")
+@app.post("/gallery/gerar-handout", dependencies=MESTRE)
 def gerar_handout(req: HandoutRequest):   # def: as chamadas ao Supabase e ao Gemini são bloqueantes
     tipo = req.tipo_documento if req.tipo_documento in INSTRUCAO_DOC else "carta"
     descricao = req.descricao.strip()[:1000]
@@ -2664,7 +2382,7 @@ class EnviarHandoutRequest(BaseModel):
     character_ids: list[str] = []
 
 
-@app.post("/gallery/{handout_id}/enviar")
+@app.post("/gallery/{handout_id}/enviar", dependencies=MESTRE)
 async def enviar_handout(handout_id: str, body: EnviarHandoutRequest):
     h = supabase.table("gallery").select("id, name, type").eq("id", handout_id).limit(1).execute()
     if not h.data or h.data[0].get("type") != "handout":
@@ -2716,124 +2434,8 @@ def handouts_do_personagem(character_id: str):
     lista = sorted(vistos.values(), key=lambda h: h.get("created_at") or "", reverse=True)
     return {"success": True, "data": lista}
 
-class WorldEventRequest(BaseModel):
-    campaign_id: str
-    name: str
-    description: str = ""
-    deadline: str = ""
-    consequences: str = ""
-    next_event_name: str = ""
-    next_event_description: str = ""
-    affects_faction_id: str = ""
-    faction_reputation_change: str = ""
-    sets_flag_key: str = ""
 
-@app.post("/world-events")
-async def criar_evento_mundo(req: WorldEventRequest):
-    result = supabase.table("world_events").insert({
-        "campaign_id": req.campaign_id,
-        "name": req.name,
-        "description": req.description,
-        "deadline": req.deadline,
-        "consequences": req.consequences,
-        "next_event_name": req.next_event_name,
-        "next_event_description": req.next_event_description,
-        "affects_faction_id": req.affects_faction_id or None,
-        "faction_reputation_change": req.faction_reputation_change or None,
-        "sets_flag_key": req.sets_flag_key or None,
-        "progress": 0,
-        "status": "ativo"
-    }).execute()
-    return {"success": True, "data": result.data[0] if result.data else None}
-
-
-@app.get("/world-events/{campaign_id}")
-async def listar_eventos_mundo(campaign_id: str):
-    result = supabase.table("world_events").select("*").eq("campaign_id", campaign_id).order("created_at").execute()
-    return {"success": True, "data": result.data}
-
-
-class UpdateWorldEventRequest(BaseModel):
-    progress: int = None
-    status: str = None
-    locked_by_master: bool = None
-    name: str = None
-    description: str = None
-    deadline: str = None
-    consequences: str = None
-
-
-@app.delete("/world-events/{event_id}")
-async def deletar_evento_mundo(event_id: str):
-    supabase.table("world_events").delete().eq("id", event_id).execute()
-    return {"success": True}
-
-@app.post("/world-events/{event_id}/sugerir")
-async def sugerir_desdobramento(event_id: str):
-    result = supabase.table("world_events").select("*").eq("id", event_id).single().execute()
-    evento = result.data
-    if not evento:
-        raise HTTPException(404, "Evento não encontrado")
-
-    prompt = f"""
-    Você é um mestre de RPG ajudando outro mestre a decidir os próximos passos do mundo.
-
-    Evento em andamento:
-    Nome: {evento['name']}
-    Descrição: {evento.get('description', '')}
-    Progresso atual: {evento.get('progress', 0)}%
-    Consequências ao concluir: {evento.get('consequences', '')}
-
-    Sugira um desdobramento plausível e específico que poderia acontecer em breve, 
-    dado o estado atual deste evento. Seja concreto, algo que o mestre possa usar 
-    imediatamente na mesa (uma ação de facção, uma complicação, um sinal de que o 
-    evento está avançando).
-
-    Responda em 2-3 frases, direto ao ponto, sem introdução.
-    """
-    try:
-        sugestao = gerar_texto_com_gemini(prompt)
-        return {"success": True, "data": sugestao.strip()}
-    except Exception as e:
-        raise HTTPException(500, f"Erro ao gerar sugestão: {str(e)}")
-
-@app.get("/presagios")
-async def get_presagios():
-    try:
-        res = supabase.table("presagios").select("*").order("created_at", desc=True).execute()
-        return {"success": True, "data": res.data}
-    except Exception as e:
-        raise HTTPException(500, f"Erro ao buscar presságios: {str(e)}")
-
-@app.post("/presagios")
-async def criar_presagio(data: dict = Body(...)):
-    try:
-        res = supabase.table("presagios").insert({
-            "campaign_id": data.get("campaign_id", "00000000-0000-0000-0000-000000000001"),
-            "texto": data.get("texto"),
-            "cumprido": False
-        }).execute()
-        return {"success": True, "data": res.data[0]}
-    except Exception as e:
-        raise HTTPException(500, f"Erro ao criar presságio: {str(e)}")
-
-@app.patch("/presagios/{id}/cumprir")
-async def cumprir_presagio(id: str):
-    try:
-        res = supabase.table("presagios").update({"cumprido": True}).eq("id", id).execute()
-        return {"success": True, "data": res.data[0]}
-    except Exception as e:
-        raise HTTPException(500, f"Erro ao cumprir presságio: {str(e)}")
-
-@app.delete("/presagios/{id}")
-async def deletar_presagio(id: str):
-    try:
-        supabase.table("presagios").delete().eq("id", id).execute()
-        return {"success": True}
-    except Exception as e:
-        raise HTTPException(500, f"Erro ao deletar presságio: {str(e)}")
-
-@app.patch("/bestiary/{id}/descoberto")
+@app.patch("/bestiary/{id}/descoberto", dependencies=MESTRE)
 async def toggle_descoberto(id: str, data: dict = Body(...)):
     try:
         res = supabase.table("bestiary").update({"discovered": data.get("discovered")}).eq("id", id).execute()
@@ -2842,204 +2444,12 @@ async def toggle_descoberto(id: str, data: dict = Body(...)):
         raise HTTPException(500, f"Erro ao atualizar bestiário: {str(e)}")
 
 
-
-def ajustar_reputacao(tipo: str, entidade_id: str, delta: int, motivo: str, origem: str = "manual") -> dict:
-    tabela, coluna = ("factions", "reputation_score") if tipo == "faction" else ("npcs", "relation_score")
-    atual = supabase.table(tabela).select(coluna).eq("id", entidade_id).limit(1).execute()
-    if not atual.data:
-        raise HTTPException(404, "Não encontrado")
-    antes = atual.data[0].get(coluna) or 0
-    depois = max(-MAXIMO, min(MAXIMO, antes + delta))
-    if depois != antes:
-        dados = {coluna: depois}
-        if tipo == "faction":
-            dados["reputation"] = estado_por_pontos(depois)   # o que já lê esse campo continua funcionando
-        supabase.table(tabela).update(dados).eq("id", entidade_id).execute()
-        supabase.table("reputation_log").insert({
-            "campaign_id": CAMPANHA_ID, "entity_type": tipo, "entity_id": entidade_id,
-            "delta": depois - antes, "score_after": depois,
-            "reason": motivo[:300], "source": origem,
-        }).execute()
-    return {"pontos": depois, "estado": estado_por_pontos(depois)}
-
-
-class AjusteReputacao(BaseModel):
-    delta: int
-    reason: str
-
-
-@app.post("/reputation/{tipo}/{entidade_id}")
-def mudar_reputacao(tipo: str, entidade_id: str, body: AjusteReputacao):
-    if tipo not in ("faction", "npc"):
-        raise HTTPException(400, "Tipo inválido")
-    if body.delta == 0 or abs(body.delta) > MAXIMO:
-        raise HTTPException(400, f"Pontos devem ficar entre -{MAXIMO} e {MAXIMO} (e não zero)")
-    motivo = body.reason.strip()
-    if not motivo:
-        raise HTTPException(400, "Informe o motivo")
-    return {"success": True, "data": ajustar_reputacao(tipo, entidade_id, body.delta, motivo)}
-
-
-@app.get("/reputation/{tipo}/{entidade_id}/log")
-def historico_reputacao(tipo: str, entidade_id: str):
-    if tipo not in ("faction", "npc"):
-        raise HTTPException(400, "Tipo inválido")
-    res = supabase.table("reputation_log") \
-        .select("id, delta, score_after, reason, source, created_at") \
-        .eq("entity_type", tipo).eq("entity_id", entidade_id) \
-        .order("created_at", desc=True).limit(30).execute()
-    return {"success": True, "data": res.data or []}
-
-@app.delete("/reputation/log/{log_id}")
-def deletar_log_reputacao(log_id: str):
-    res = supabase.table("reputation_log").delete().eq("id", log_id).execute()
-    if not res.data:
-        raise HTTPException(404, "Registro não encontrado")
-    return {"success": True}
-
-def propagar_consequencias_evento(evento, campaign_id):
-    try:
-        if evento.get("affects_faction_id") and evento.get("faction_reputation_change"):
-            d = delta_do_evento(evento["faction_reputation_change"])
-            if d:
-                try:
-                    ajustar_reputacao("faction", evento["affects_faction_id"], d,
-                                      f"Evento: {evento['name']}", "evento")
-                except Exception as e:
-                    print(f"[AVISO] Falha ao ajustar reputação: {e}")
-
-        if evento.get("sets_flag_key"):
-            flag_key = evento["sets_flag_key"]
-            existente = supabase.table("campaign_flags").select("id").eq("campaign_id", campaign_id).eq("key", flag_key).execute()
-
-            if existente.data:
-                supabase.table("campaign_flags").update({"value": True}).eq("campaign_id", campaign_id).eq("key", flag_key).execute()
-            else:
-                supabase.table("campaign_flags").insert({
-                    "campaign_id": campaign_id,
-                    "key": flag_key,
-                    "value": True,
-                    "description": f"Criada automaticamente pelo evento: {evento['name']}"
-                }).execute()
-    except Exception as e:
-        print(f"[AVISO] Falha ao propagar consequências: {e}")
-
-
-@app.patch("/world-events/{event_id}")
-def atualizar_evento_mundo(event_id: str, req: UpdateWorldEventRequest):
-    updates = {k: v for k, v in req.dict().items() if v is not None}
-    if not updates:
-        return {"success": True}
-
-    antes = supabase.table("world_events").select("progress, status").eq("id", event_id).limit(1).execute()
-    if not antes.data:
-        raise HTTPException(404, "Evento não encontrado")
-    ja_concluido = (antes.data[0].get("progress") or 0) >= 100
-
-    result = supabase.table("world_events").update(updates).eq("id", event_id).execute()
-    evento_atualizado = result.data[0] if result.data else None
-
-    if evento_atualizado and (evento_atualizado.get("progress") or 0) >= 100 and not ja_concluido:
-        propagar_consequencias_evento(evento_atualizado, evento_atualizado["campaign_id"])
-
-        # Se tem um próximo evento configurado, dispara a cadeia
-        if evento_atualizado.get("next_event_name") and not evento_atualizado.get("triggered_event_id"):
-            novo_evento = supabase.table("world_events").insert({
-                "campaign_id": evento_atualizado["campaign_id"],
-                "name": evento_atualizado["next_event_name"],
-                "description": evento_atualizado.get("next_event_description", ""),
-                "progress": 0,
-                "status": "ativo"
-            }).execute()
-
-            if novo_evento.data:
-                supabase.table("world_events").update({
-                    "triggered_event_id": novo_evento.data[0]["id"]
-                }).eq("id", event_id).execute()
-
-    return {"success": True}
-
-@app.get("/world-changelog/{campaign_id}/nao-lido/{personagem_id}")
-def changelog_nao_lido(campaign_id: str, personagem_id: str):
-    resp = supabase.table("world_changelog").select("*") \
-        .eq("campaign_id", campaign_id) \
-        .order("created_at", desc=True).limit(5).execute()
-    nao_lidos = [c for c in resp.data if personagem_id not in (c.get("visto_por") or [])]
-    return {"data": nao_lidos}
-
-
-@app.post("/world-changelog/{changelog_id}/marcar-lido")
-def marcar_changelog_lido(changelog_id: str, personagem_id: str = Body(..., embed=True)):
-    item = supabase.table("world_changelog").select("*").eq("id", changelog_id).single().execute().data
-    if not item:
-        raise HTTPException(404, "Changelog não encontrado")
-    visto = item.get("visto_por") or []
-    if personagem_id not in visto:
-        visto.append(personagem_id)
-    supabase.table("world_changelog").update({"visto_por": visto}).eq("id", changelog_id).execute()
-    return {"ok": True}
-
-
-@app.get("/world-changelog/{campaign_id}")
-def listar_changelog(campaign_id: str):
-    """Histórico completo — usado pelo mestre no MundoVivo."""
-    resp = supabase.table("world_changelog").select("*") \
-        .eq("campaign_id", campaign_id) \
-        .order("created_at", desc=True).execute()
-    return {"data": resp.data}
-
-@app.post("/world-changelog/{changelog_id}/marcar-lido-mestre")
-def marcar_changelog_lido_mestre(changelog_id: str):
-    supabase.table("world_changelog").update({"visto_mestre": True}).eq("id", changelog_id).execute()
-    return({"ok": True})
-
-
-class FlagRequest(BaseModel):
-    campaign_id: str
-    key: str
-    value: bool = False
-    description: str = ""
-
-@app.post("/flags")
-async def criar_flag(req: FlagRequest):
-    try:
-        result = supabase.table("campaign_flags").insert({
-            "campaign_id": req.campaign_id,
-            "key": req.key,
-            "value": req.value,
-            "description": req.description
-        }).execute()
-        return {"success": True, "data": result.data[0] if result.data else None}
-    except Exception as e:
-        raise HTTPException(500, f"Erro ao criar flag: {str(e)}")
-
-
-@app.get("/flags/{campaign_id}")
-async def listar_flags(campaign_id: str):
-    result = supabase.table("campaign_flags").select("*").eq("campaign_id", campaign_id).order("key").execute()
-    return {"success": True, "data": result.data}
-
-
-class UpdateFlagRequest(BaseModel):
-    value: bool
-
-@app.patch("/flags/{flag_id}")
-async def atualizar_flag(flag_id: str, req: UpdateFlagRequest):
-    supabase.table("campaign_flags").update({"value": req.value}).eq("id", flag_id).execute()
-    return {"success": True}
-
-
-@app.delete("/flags/{flag_id}")
-async def deletar_flag(flag_id: str):
-    supabase.table("campaign_flags").delete().eq("id", flag_id).execute()
-    return {"success": True}
-
 class ArquivoMestreRequest(BaseModel):
     campaign_id: str = "00000000-0000-0000-0000-000000000001"
     categoria: str
     texto: str
 
-@app.post("/arquivo-mestre")
+@app.post("/arquivo-mestre", dependencies=MESTRE)
 async def criar_arquivo_mestre(req: ArquivoMestreRequest):
     result = supabase.table("arquivo_mestre").insert({
         "campaign_id": req.campaign_id,
@@ -3049,50 +2459,15 @@ async def criar_arquivo_mestre(req: ArquivoMestreRequest):
     return {"success": True, "data": result.data[0] if result.data else None}
 
 
-@app.get("/arquivo-mestre/{campaign_id}")
+@app.get("/arquivo-mestre/{campaign_id}", dependencies=MESTRE)
 async def listar_arquivo_mestre(campaign_id: str):
     result = supabase.table("arquivo_mestre").select("*").eq("campaign_id", campaign_id).order("created_at", desc=True).execute()
     return {"success": True, "data": result.data}
 
 
-@app.delete("/arquivo-mestre/{item_id}")
+@app.delete("/arquivo-mestre/{item_id}", dependencies=MESTRE)
 async def deletar_arquivo_mestre(item_id: str):
     supabase.table("arquivo_mestre").delete().eq("id", item_id).execute()
-    return {"success": True}
-
-class ProphecyRequest(BaseModel):
-    campaign_id: str = "00000000-0000-0000-0000-000000000001"
-    texto: str
-    condicao: str
-
-@app.post("/prophecies")
-async def criar_profecia(req: ProphecyRequest):
-    result = supabase.table("prophecies").insert({
-        "campaign_id": req.campaign_id,
-        "texto": req.texto,
-        "condicao": req.condicao,
-        "status": "pendente"
-    }).execute()
-    return {"success": True, "data": result.data[0] if result.data else None}
-
-@app.get("/prophecies/{campaign_id}")
-async def listar_profecias(campaign_id: str):
-    result = supabase.table("prophecies").select("*").eq("campaign_id", campaign_id).execute()
-    return {"success": True, "data": result.data}
-
-class UpdateProphecyRequest(BaseModel):
-    status: str = None
-    notas_cumprimento: str = None
-
-@app.patch("/prophecies/{prophecy_id}")
-async def atualizar_profecia(prophecy_id: str, req: UpdateProphecyRequest):
-    updates = {k: v for k, v in req.dict().items() if v is not None}
-    supabase.table("prophecies").update(updates).eq("id", prophecy_id).execute()
-    return {"success": True}
-
-@app.delete("/prophecies/{prophecy_id}")
-async def deletar_profecia(prophecy_id: str):
-    supabase.table("prophecies").delete().eq("id", prophecy_id).execute()
     return {"success": True}
 
 
@@ -3104,13 +2479,13 @@ class EventoRegional(BaseModel):
     modificadores: dict  # {"comida": 1.5, "armas": 1.3, "viagem": 0.6, "comercio": 0.7}
 
 
-@app.post("/economia/eventos")
+@app.post("/economia/eventos", dependencies=MESTRE)
 def criar_evento(evento: EventoRegional):
     resp = supabase.table("eventos_regionais").insert(evento.dict()).execute()
     return resp.data[0]
 
 
-@app.patch("/economia/eventos/{evento_id}/encerrar")
+@app.patch("/economia/eventos/{evento_id}/encerrar", dependencies=MESTRE)
 def encerrar_evento(evento_id: str):
     resp = supabase.table("eventos_regionais") \
         .update({"ativo": False}) \
@@ -3120,7 +2495,7 @@ def encerrar_evento(evento_id: str):
     return resp.data[0]
 
 
-@app.get("/economia/eventos-campanha/{campaign_id}")
+@app.get("/economia/eventos-campanha/{campaign_id}", dependencies=MESTRE)
 def listar_todos_eventos(campaign_id: str):
     """Lista todos os eventos regionais (ativos e encerrados) — usado pela aba MundoVivo."""
     resp = supabase.table("eventos_regionais") \
@@ -3167,7 +2542,7 @@ def preco_atual(item_id: str, regiao: str, campaign_id: str):
         "motivo": " + ".join(motivos) if motivos else None,
     }
 
-@app.delete("/economia/eventos/{evento_id}")
+@app.delete("/economia/eventos/{evento_id}", dependencies=MESTRE)
 def deletar_evento(evento_id: str):
     resp = supabase.table("eventos_regionais").delete().eq("id", evento_id).execute()
     if not resp.data:
@@ -3186,21 +2561,21 @@ class IniciarViagem(BaseModel):
     clima: Optional[str] = None
 
 
-@app.get("/viagem/locais/{campaign_id}")
+@app.get("/viagem/locais/{campaign_id}", dependencies=MESTRE)
 def listar_locais_para_viagem(campaign_id: str):
     resp = supabase.table("locations").select("id, name, region_info, monsters, commerce") \
         .eq("campaign_id", campaign_id).execute()
     return {"data": resp.data}
 
 
-@app.post("/viagem/iniciar")
+@app.post("/viagem/iniciar", dependencies=MESTRE)
 def iniciar_viagem(payload: IniciarViagem):
     viagem = payload.dict()
     resp = supabase.table("viagens").insert(viagem).execute()
     return resp.data[0]
 
 
-@app.post("/viagem/{viagem_id}/avancar")
+@app.post("/viagem/{viagem_id}/avancar", dependencies=MESTRE)
 def avancar_dia(viagem_id: str):
     viagem = supabase.table("viagens").select("*").eq("id", viagem_id).single().execute().data
     if not viagem:
@@ -3246,7 +2621,7 @@ def avancar_dia(viagem_id: str):
     return resp.data[0]
 
 
-@app.get("/viagem/campanha/{campaign_id}")
+@app.get("/viagem/campanha/{campaign_id}", dependencies=MESTRE)
 def listar_viagens(campaign_id: str):
     resp = supabase.table("viagens") \
         .select("*, origem:origem_id(name), destino:destino_id(name)") \
@@ -3255,99 +2630,20 @@ def listar_viagens(campaign_id: str):
         .execute()
     return {"data": resp.data}
 
-@app.get("/viagem/{viagem_id}")
+@app.get("/viagem/{viagem_id}", dependencies=MESTRE)
 def status_viagem(viagem_id: str):
     resp = supabase.table("viagens").select("*").eq("id", viagem_id).single().execute()
     if not resp.data:
         raise HTTPException(404, "Viagem não encontrada")
     return resp.data
 
-@app.delete("/viagem/{viagem_id}")
+@app.delete("/viagem/{viagem_id}", dependencies=MESTRE)
 def deletar_viagem(viagem_id: str):
     resp = supabase.table("viagens").delete().eq("id", viagem_id).execute()
     if not resp.data:
         raise HTTPException(404, "Viagem não encontrada")
     return {"ok": True}
 
-class StagesReq(BaseModel):
-    campaign_id: str
-    npc_id: str
-    stages: list[str]
-
-class GerarStagesReq(BaseModel):
-    npc_name: str
-    secret: str
-
-class AvancarSegredoReq(BaseModel):
-    npc_name: str
-    secret: str
-
-
-@app.get("/secret-stages/{campaign_id}/{npc_id}")
-def get_secret_stages(campaign_id: str, npc_id: str):
-    r = supabase.table("npc_secret_stages").select("*") \
-        .eq("campaign_id", campaign_id).eq("npc_id", npc_id).execute()
-    return {"data": r.data[0] if r.data else None}
-
-
-@app.post("/secret-stages")
-def salvar_secret_stages(req: StagesReq):
-    r = supabase.table("npc_secret_stages").upsert(
-        {"campaign_id": req.campaign_id, "npc_id": req.npc_id, "stages": req.stages},
-        on_conflict="campaign_id,npc_id"
-    ).execute()
-    return {"data": r.data[0]}
-
-
-@app.post("/secret-stages/gerar")
-def gerar_secret_stages(req: GerarStagesReq):
-    prompt = f"""
-    Segredo do NPC {req.npc_name}: "{req.secret}"
-
-    Crie 3 estágios graduais de revelação desse segredo, do mais vago ao mais próximo da verdade,
-    SEM entregar a verdade completa:
-    1) uma pista sutil e ambígua;
-    2) uma suspeita mais concreta;
-    3) uma descoberta parcial (quase tudo, faltando o essencial).
-
-    Cada estágio deve ter 1-2 frases, escritas como algo que os jogadores perceberiam.
-    Responda com exatamente 3 linhas, uma por estágio, sem numeração, sem markdown, sem aspas.
-    """
-    texto = gerar_texto_com_gemini(prompt).strip().replace("```json", "").replace("```", "").strip()
-
-    linhas = None
-    try:
-        parsed = json.loads(texto)
-        if isinstance(parsed, list):
-            linhas = [str(x).strip() for x in parsed]
-    except Exception:
-        pass
-
-    if not linhas:
-        linhas = [
-            l.strip().strip('[]",\'-•* ').lstrip("0123456789.) ").strip()
-            for l in texto.split("\n")
-            if l.strip() and l.strip() not in ("[", "]")
-        ]
-
-    if len(linhas) < 3:
-        raise HTTPException(500, "A IA não retornou os 3 estágios.")
-    return {"data": linhas[:3]}
-
-
-@app.post("/secret-stages/{stage_id}/avancar")
-def avancar_secret_stage(stage_id: str, req: AvancarSegredoReq):
-    row = supabase.table("npc_secret_stages").select("*").eq("id", stage_id).single().execute().data
-    if not row:
-        raise HTTPException(404, "Segredo não encontrado")
-    nivel = row["nivel_revelado"]
-    if nivel >= 4:
-        raise HTTPException(400, "Segredo já totalmente revelado")
-    novo = nivel + 1
-    rotulos = {1: "👁️ Pista", 2: "❓ Suspeita", 3: "💡 Descoberta parcial", 4: "🔓 Verdade"}
-    texto = req.secret if novo == 4 else row["stages"][novo - 1]
-    supabase.table("npc_secret_stages").update({"nivel_revelado": novo}).eq("id", stage_id).execute()
-    return {"nivel_revelado": novo, "message": f"{rotulos[novo]} sobre {req.npc_name}: {texto}"}
 
 class GazetaGerarReq(BaseModel):
     campaign_id: str
@@ -3358,7 +2654,7 @@ class GazetaEditReq(BaseModel):
     noticias: Optional[list] = None
 
 
-@app.post("/gazeta/gerar")
+@app.post("/gazeta/gerar", dependencies=MESTRE)
 def gerar_gazeta(req: GazetaGerarReq):
     cid = req.campaign_id
     partes = []
@@ -3445,7 +2741,7 @@ Retorne APENAS um JSON válido:
     return {"data": r.data[0]}
 
 
-@app.get("/gazeta/{campaign_id}")
+@app.get("/gazeta/{campaign_id}", dependencies=MESTRE)
 def listar_gazetas(campaign_id: str):
     r = supabase.table("gazetas").select("*").eq("campaign_id", campaign_id) \
         .order("created_at", desc=True).execute()
@@ -3459,7 +2755,7 @@ def gazeta_publicada(campaign_id: str):
     return {"data": r.data[0] if r.data else None}
 
 
-@app.patch("/gazeta/{gazeta_id}")
+@app.patch("/gazeta/{gazeta_id}", dependencies=MESTRE)
 def editar_gazeta(gazeta_id: str, req: GazetaEditReq):
     campos = {k: v for k, v in req.dict().items() if v is not None}
     if not campos:
@@ -3468,7 +2764,7 @@ def editar_gazeta(gazeta_id: str, req: GazetaEditReq):
     return {"data": r.data[0] if r.data else None}
 
 
-@app.post("/gazeta/{gazeta_id}/publicar")
+@app.post("/gazeta/{gazeta_id}/publicar", dependencies=MESTRE)
 def publicar_gazeta(gazeta_id: str):
     r = supabase.table("gazetas").update({
         "status": "publicada",
@@ -3479,7 +2775,7 @@ def publicar_gazeta(gazeta_id: str):
     return {"data": r.data[0]}
 
 
-@app.delete("/gazeta/{gazeta_id}")
+@app.delete("/gazeta/{gazeta_id}", dependencies=MESTRE)
 def deletar_gazeta(gazeta_id: str):
     supabase.table("gazetas").delete().eq("id", gazeta_id).execute()
     return {"ok": True}
@@ -3528,7 +2824,7 @@ Responda APENAS com o texto da consequência, sem prefixos, sem aspas, sem markd
     return {"data": r.data[0]}
 
 
-@app.get("/downtime/pendentes/{campaign_id}")
+@app.get("/downtime/pendentes/{campaign_id}", dependencies=MESTRE)
 def listar_downtime_pendentes(campaign_id: str):
     r = supabase.table("downtime_requests").select("*") \
         .eq("campaign_id", campaign_id).eq("status", "pendente") \
@@ -3536,7 +2832,7 @@ def listar_downtime_pendentes(campaign_id: str):
     return {"data": r.data}
 
 
-@app.post("/downtime/{req_id}/resolver")
+@app.post("/downtime/{req_id}/resolver", dependencies=MESTRE)
 def resolver_downtime(req_id: str, req: DowntimeResolverReq):
     r = supabase.table("downtime_requests").update({
         "status": "aprovado" if req.aprovado else "rejeitado",
@@ -3561,118 +2857,6 @@ def marcar_downtime_visto(req_id: str):
     supabase.table("downtime_requests").update({"visto_jogador": True}).eq("id", req_id).execute()
     return {"ok": True}
 
-class ConsequenciaCriarReq(BaseModel):
-    campaign_id: str
-    gatilho: str
-    consequencia: Optional[str] = None
-    condicao_tipo: str = "manual"   # manual | sessao | flag
-    condicao_valor: Optional[str] = None
-
-class ConsequenciaGerarReq(BaseModel):
-    gatilho: str
-
-class ConsequenciaRevelarReq(BaseModel):
-    enviar_sussurro: bool = False
-    personagem_ids: Optional[list[str]] = None
-
-
-@app.post("/consequencias/gerar")
-def gerar_consequencia_v2(req: ConsequenciaGerarReq):
-    prompt = f"""Você é um mestre de D&D 5e criando um gancho narrativo de longo prazo.
-Ação dos jogadores: "{req.gatilho}"
-
-Crie UMA consequência oculta e interessante dessa ação, que só será revelada mais tarde.
-Deve ser algo que os jogadores não podem prever, mas que faça sentido causal com a ação.
-2-3 frases. Responda APENAS com o texto da consequência, sem prefixos, sem aspas, sem markdown."""
-    texto = gerar_texto_com_gemini(prompt).strip()
-    return {"data": texto}
-
-
-@app.post("/consequencias")
-def criar_consequencia(req: ConsequenciaCriarReq):
-    ultima = supabase.table("sessions").select("session_number") \
-        .eq("campaign_id", req.campaign_id).order("session_number", desc=True).limit(1).execute().data
-    numero_atual = ultima[0]["session_number"] if ultima else 0
-
-    r = supabase.table("consequencias_ocultas").insert({
-        "campaign_id": req.campaign_id,
-        "gatilho": req.gatilho,
-        "consequencia": req.consequencia,
-        "condicao_tipo": req.condicao_tipo,
-        "condicao_valor": req.condicao_valor,
-        "session_number_criacao": numero_atual,
-    }).execute()
-    return {"data": r.data[0]}
-
-
-@app.get("/consequencias/{campaign_id}")
-def listar_consequencias(campaign_id: str):
-    r = supabase.table("consequencias_ocultas").select("*") \
-        .eq("campaign_id", campaign_id).order("created_at", desc=True).execute()
-    return {"data": r.data}
-
-
-@app.get("/consequencias/prontas/{campaign_id}")
-def consequencias_prontas(campaign_id: str):
-    """Consequências com condição automática já satisfeita, ainda ocultas."""
-    ocultas = supabase.table("consequencias_ocultas").select("*") \
-        .eq("campaign_id", campaign_id).eq("status", "oculta").execute().data or []
-
-    ultima = supabase.table("sessions").select("session_number") \
-        .eq("campaign_id", campaign_id).order("session_number", desc=True).limit(1).execute().data
-    sessao_atual = ultima[0]["session_number"] if ultima else 0
-
-    flags_ativas = supabase.table("campaign_flags").select("key") \
-        .eq("campaign_id", campaign_id).eq("value", True).execute().data or []
-    flags_keys = {f["key"] for f in flags_ativas}
-
-    prontas = []
-    for c in ocultas:
-        if c["condicao_tipo"] == "sessao" and c["condicao_valor"]:
-            try:
-                if sessao_atual >= int(c["condicao_valor"]):
-                    prontas.append(c)
-            except ValueError:
-                pass
-        elif c["condicao_tipo"] == "flag" and c["condicao_valor"] in flags_keys:
-            prontas.append(c)
-
-    return {"data": prontas}
-
-
-@app.post("/consequencias/{cid}/revelar")
-def revelar_consequencia(cid: str, req: ConsequenciaRevelarReq):
-    c = supabase.table("consequencias_ocultas").select("*").eq("id", cid).single().execute().data
-    if not c:
-        raise HTTPException(404, "Não encontrada")
-
-    supabase.table("consequencias_ocultas").update({
-        "status": "revelada",
-        "revelada_em": datetime.utcnow().isoformat(),
-    }).eq("id", cid).execute()
-
-    supabase.table("world_log").insert({
-        "campaign_id": c["campaign_id"],
-        "session_number": c.get("session_number_criacao") or 0,
-        "event_name": "Consequência revelada",
-        "description": f"{c['consequencia']} (originada de: \"{c['gatilho']}\")",
-    }).execute()
-
-    if req.enviar_sussurro and req.personagem_ids:
-        for pid in req.personagem_ids:
-            supabase.table("secret-messages" if False else "secret_messages").insert({
-                "campaign_id": c["campaign_id"],
-                "character_id": pid,
-                "message": f"🕯️ {c['consequencia']}",
-            }).execute()
-
-    return {"ok": True}
-
-
-@app.delete("/consequencias/{cid}")
-def deletar_consequencia(cid: str):
-    supabase.table("consequencias_ocultas").delete().eq("id", cid).execute()
-    return {"ok": True}
 
 class MisterioNovo(BaseModel):
     title: str
@@ -3745,7 +2929,7 @@ def listar_notas():
     return {"success": True, "data": res.data or []}
 
 
-@app.patch("/notas-sessao/{nota_id}", dependencies=[Depends(exigir_mestre)])
+@app.post("/notas-sessao", dependencies=[Depends(exigir_mestre)])
 def criar_nota(body: NotaNova):
     texto = body.text.strip()
     if not texto:
@@ -3792,12 +2976,6 @@ def encerrar_sessao_notas():
             .eq("id", n["id"]).execute()
     return {"success": True, "atualizadas": len(res.data or [])}
 
-@app.get("/world-changelog/{campaign_id}/nao-lido-mestre")
-def changelog_nao_lido_mestre(campaign_id: str):
-    r = supabase.table("world_changelog").select("*") \
-        .eq("campaign_id", campaign_id).eq("visto_mestre", False) \
-        .order("created_at", desc=True).limit(10).execute()
-    return {"data": r.data}
 
 # ===================== RODAR =====================
 if __name__ == "__main__":
