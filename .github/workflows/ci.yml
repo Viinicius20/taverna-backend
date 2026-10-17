@@ -24,3 +24,8 @@ jobs:
 
       - name: Rodar os testes
         run: python -m pytest -v
+        env:
+          JWT_SECRET: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          SUPABASE_URL: "http://localhost:54321"
+          SUPABASE_KEY: "a.b.c"
+          GEMINI_API_KEY: "chave-falsa"

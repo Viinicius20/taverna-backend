@@ -54,7 +54,8 @@ DO_DONO = [
     ("GET", "/gallery/handouts-para/x"), ("GET", "/downtime/resolvidos-nao-vistos/x"),
     ("POST", "/create-character"), ("POST", "/level-up"), ("POST", "/upload-pdf"),
     ("POST", "/aplicar-asi"), ("POST", "/personagem/conhecimento"),
-    ("GET", "/spells"), ("POST", "/push/subscribe"), ("GET", "/boato"),
+    ("GET", "/spells"), ("POST", "/push/subscribe"),
+    ("PATCH", "/secret-messages/x/lida"), ("POST", "/notify/item"),
 ]
 
 
