@@ -23,6 +23,17 @@ DO_MESTRE = [
     ("POST", "/reputation/npc/x"), ("GET", "/reputation/npc/x/log"), ("DELETE", "/reputation/log/x"),
     ("GET", "/secret-stages/x/y"), ("POST", "/secret-stages"), ("POST", "/secret-stages/gerar"),
     ("POST", "/secret-stages/x/avancar"),
+    ("POST", "/arquivo-mestre"), ("GET", "/arquivo-mestre/x"), ("DELETE", "/arquivo-mestre/x"),
+    ("POST", "/economia/eventos"), ("PATCH", "/economia/eventos/x/encerrar"),
+    ("GET", "/economia/eventos-campanha/x"), ("DELETE", "/economia/eventos/x"),
+    ("GET", "/viagem/locais/x"), ("POST", "/viagem/iniciar"), ("POST", "/viagem/x/avancar"),
+    ("GET", "/viagem/campanha/x"), ("GET", "/viagem/x"), ("DELETE", "/viagem/x"),
+    ("POST", "/gazeta/gerar"), ("GET", "/gazeta/x"), ("PATCH", "/gazeta/x"),
+    ("POST", "/gazeta/x/publicar"), ("DELETE", "/gazeta/x"),
+    ("GET", "/downtime/pendentes/x"), ("POST", "/downtime/x/resolver"),
+    ("GET", "/misterios"), ("POST", "/misterios"), ("PUT", "/misterios/x/pistas"), ("DELETE", "/misterios/x"),
+    ("GET", "/notas-sessao"), ("POST", "/notas-sessao"), ("PATCH", "/notas-sessao/x"),
+    ("DELETE", "/notas-sessao/x"), ("POST", "/notas-sessao/encerrar-sessao"),
 ]
 
 PUBLICAS = [
@@ -30,7 +41,10 @@ PUBLICAS = [
     ("POST", "/world-changelog/{changelog_id}/marcar-lido"),
     ("GET", "/wiki/{campaign_id}/jogador"),
     ("GET", "/diario/{character_id}"),
-    ("GET", "/tv/{campaign_id}"),
+    ("GET", "/tv/{campaign_id}"),     ("GET", "/gazeta/{campaign_id}/publicada"),
+    ("POST", "/downtime/solicitar"),
+    ("GET", "/downtime/resolvidos-nao-vistos/{character_id}"),
+    ("POST", "/downtime/{req_id}/marcar-visto"),
 ]
 
 
