@@ -1,0 +1,54 @@
+import pytest
+from fastapi.routing import APIRoute
+from fastapi.testclient import TestClient
+
+from main import app
+from auth import exigir_mestre, criar_token
+
+client = TestClient(app, raise_server_exceptions=False)
+
+DO_MESTRE = [
+    ("GET", "/world-log/x"), ("DELETE", "/world-log/x"),
+    ("POST", "/world-events"), ("GET", "/world-events/x"), ("PATCH", "/world-events/x"),
+    ("DELETE", "/world-events/x"), ("POST", "/world-events/x/sugerir"),
+    ("POST", "/presagios"), ("PATCH", "/presagios/x/cumprir"), ("DELETE", "/presagios/x"),
+    ("GET", "/world-changelog/x"), ("GET", "/world-changelog/x/nao-lido-mestre"),
+    ("POST", "/world-changelog/x/marcar-lido-mestre"),
+    ("POST", "/flags"), ("GET", "/flags/x"), ("PATCH", "/flags/x"), ("DELETE", "/flags/x"),
+    ("POST", "/prophecies"), ("GET", "/prophecies/x"), ("PATCH", "/prophecies/x"), ("DELETE", "/prophecies/x"),
+    ("POST", "/consequencias/gerar"), ("POST", "/consequencias/sugerir"), ("POST", "/consequencias"),
+    ("GET", "/consequencias/x"), ("GET", "/consequencias/prontas/x"),
+    ("POST", "/consequencias/x/revelar"), ("DELETE", "/consequencias/x"),     ("POST", "/factions/generate"), ("GET", "/factions/x"), ("PATCH", "/factions/x"), ("DELETE", "/factions/x"),
+    ("POST", "/locations/generate"), ("GET", "/locations/x"), ("PATCH", "/locations/x"), ("DELETE", "/locations/x"),
+    ("POST", "/reputation/npc/x"), ("GET", "/reputation/npc/x/log"), ("DELETE", "/reputation/log/x"),
+    ("GET", "/secret-stages/x/y"), ("POST", "/secret-stages"), ("POST", "/secret-stages/gerar"),
+    ("POST", "/secret-stages/x/avancar"),
+]
+
+PUBLICAS = [
+    ("GET", "/world-changelog/{campaign_id}/nao-lido/{personagem_id}"),
+    ("POST", "/world-changelog/{changelog_id}/marcar-lido"),
+    ("GET", "/wiki/{campaign_id}/jogador"),
+    ("GET", "/diario/{character_id}"),
+    ("GET", "/tv/{campaign_id}"),
+]
+
+
+@pytest.mark.parametrize("metodo,caminho", DO_MESTRE)
+def test_sem_token_responde_401(metodo, caminho):
+    r = client.request(metodo, caminho)
+    assert r.status_code == 401, f"{metodo} {caminho} respondeu {r.status_code}"
+
+
+@pytest.mark.parametrize("metodo,caminho", DO_MESTRE)
+def test_jogador_responde_403(metodo, caminho):
+    token = criar_token({"id": "teste", "role": "jogador"})
+    r = client.request(metodo, caminho, headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 403, f"{metodo} {caminho} respondeu {r.status_code}"
+
+
+@pytest.mark.parametrize("metodo,caminho", PUBLICAS)
+def test_rotas_do_jogador_continuam_abertas(metodo, caminho):
+    rota = next(r for r in app.routes
+                if isinstance(r, APIRoute) and r.path == caminho and metodo in r.methods)
+    assert not any(d.call is exigir_mestre for d in rota.dependant.dependencies)
