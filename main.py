@@ -25,7 +25,7 @@ from datetime import datetime
 from utils import limpar_texto
 from utils import MAXIMO
 from core import supabase, CAMPANHA_ID
-from routers import wiki, fatos, diario, tv, mundo_vivo, mundo_fisico, extras
+from routers import wiki, fatos, diario, tv, mundo_vivo, mundo_fisico, extras, publica
 from auth import usuario_opcional
 
 
@@ -146,6 +146,7 @@ app.include_router(wiki.router)
 app.include_router(fatos.router)
 app.include_router(diario.router)
 app.include_router(tv.router)
+app.include_router(publica.router)
 
 app.include_router(mundo_vivo.router)
 app.include_router(mundo_fisico.router)
