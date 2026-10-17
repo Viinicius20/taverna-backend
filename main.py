@@ -122,6 +122,11 @@ ARQUETIPOS_POR_CLASSE = {
     "Barbarian": {"nivel": 3, "arquetipos": ["Berserker", "Totem Warrior", "Zealot", "Storm Herald", "Wild Magic", "Beast"]},
 }
 
+CAMPOS_PUBLICOS = ("name", "race", "class", "background", "level",
+                   "attributes", "combat", "features", "background_story")
+COMBATE_PUBLICO = ("hp_max", "hp", "ac", "ca", "initiative", "speed",
+                   "proficiency_bonus", "proficiency", "hit_dice")
+
 limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter
 
@@ -2443,8 +2448,26 @@ async def toggle_descoberto(id: str, data: dict = Body(...)):
         res = supabase.table("bestiary").update({"discovered": data.get("discovered")}).eq("id", id).execute()
         return {"success": True, "data": res.data[0]}
     except Exception as e:
-        raise HTTPException(500, f"Erro ao atualizar bestiário: {str(e)}")
+        raise
 
+@app.get("/ficha-publica/{character_id}")
+@limiter.limit("30/minute")
+def ficha_publica(request: Request, character_id: str):
+    try:
+        res = supabase.table("characters").select("id, system, data") \
+            .eq("id", character_id).limit(1).execute()
+    except Exception:
+        raise HTTPException(404, "Personagem não encontrado")   # id inválido
+    if not res.data:
+        raise HTTPException(404, "Personagem não encontrado")
+
+    row = res.data[0]
+    d = row.get("data") or {}
+    publico = {k: d[k] for k in CAMPOS_PUBLICOS if k in d}
+    if isinstance(publico.get("combat"), dict):
+        publico["combat"] = {k: v for k, v in publico["combat"].items() if k in COMBATE_PUBLICO}
+
+    return {"success": True, "data": {"id": row["id"], "system": row.get("system"), "data": publico}}
 
 # ===================== RODAR =====================
 if __name__ == "__main__":
