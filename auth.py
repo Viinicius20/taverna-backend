@@ -45,6 +45,8 @@ def exigir_mestre(user: dict = Depends(usuario_atual)) -> dict:
         raise HTTPException(403, "Apenas o mestre pode fazer isso")
     return user
 
+MESTRE = [Depends(exigir_mestre)]
+
 def usuario_opcional(authorization: str = Header(None)):
     if not authorization or not authorization.startswith("Bearer "):
         return None
