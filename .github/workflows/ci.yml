@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  testes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+
+      - name: Instalar dependências
+        run: pip install -r requirements.txt pytest ruff
+
+      - name: Procurar erros graves (nomes indefinidos, sintaxe)
+        run: ruff check --select E9,F63,F7,F82 .
+
+      - name: Rodar os testes
+        run: python -m pytest -v
