@@ -8,7 +8,7 @@ import urllib.parse
 from fastapi import Depends
 from servicos import ajustar_reputacao, propagar_consequencias_evento
 from ia import gerar_texto_com_gemini, gerar_json_com_gemini
-from auth import confere_senha, criar_token, exigir_mestre, MESTRE
+from auth import confere_senha, criar_token, exigir_mestre, MESTRE, usuario_atual, dono_ou_mestre
 from pywebpush import webpush, WebPushException
 from google.genai.errors import ServerError, ClientError
 from fastapi import FastAPI, HTTPException, UploadFile, File, Request, Body, Form
@@ -27,6 +27,7 @@ from utils import MAXIMO
 from core import supabase, CAMPANHA_ID
 from routers import wiki, fatos, diario, tv, mundo_vivo, mundo_fisico, extras
 from auth import usuario_opcional
+
 
 
 VELOCIDADE_KM_DIA = 40
@@ -211,7 +212,7 @@ class EncerrarSessaoRequest(BaseModel):
 
 # ===================== ENDPOINTS =====================
 
-@app.post("/create-character")
+@app.post("/create-character", dependencies=[Depends(usuario_atual)])
 @limiter.limit("10/minute")
 async def create_character(request: Request, req: CreateCharacterRequest):
     prompt = f"""
@@ -344,7 +345,7 @@ async def create_character(request: Request, req: CreateCharacterRequest):
         raise HTTPException(500, "Erro ao criar personagem")
 
 
-@app.put("/characters/{character_id}")
+@app.put("/characters/{character_id}", dependencies=[Depends(dono_ou_mestre)])
 async def update_character(character_id: str, req: UpdateCharacterRequest):
     try:
         print(f"SALVANDO: ataques={req.data.get('ataques')}, notas={req.data.get('notas_privadas')}")
@@ -401,7 +402,7 @@ Itens mágicos: apropriados pro nível {req.nivel_medio}, criativos e únicos.""
         raise HTTPException(500, {"error": f"Erro ao gerar loot: {str(e)}"})
 
 
-@app.post("/level-up")
+@app.post("/level-up", dependencies=[Depends(usuario_atual)])
 @limiter.limit("10/minute")
 async def level_up(request: Request, req: LevelUpRequest):
     ficha = req.ficha_atual
@@ -516,7 +517,7 @@ async def level_up(request: Request, req: LevelUpRequest):
         raise HTTPException(500, "Erro ao processar level up")
 
 
-@app.post("/upload-pdf")
+@app.post("/upload-pdf", dependencies=[Depends(usuario_atual)])
 @limiter.limit("5/minute")
 async def upload_pdf(request: Request, file: UploadFile = File(...), system: str = "D&D 5e", user_id: str = "", campaign_id: str = ""):
     if not file.filename.lower().endswith(".pdf"):
@@ -714,7 +715,7 @@ async def list_characters(user_id: str = "", campaign_id: str = "", sem_dono: bo
         raise HTTPException(500, f"Erro ao buscar personagens: {str(e)}")
 
 
-@app.get("/characters/{character_id}")
+@app.get("/characters/{character_id}", dependencies=[Depends(dono_ou_mestre)])
 async def get_character(character_id: str):
     try:
         response = supabase.table("characters").select("*").eq("id", character_id).single().execute()
@@ -725,7 +726,7 @@ async def get_character(character_id: str):
         raise HTTPException(500, f"Erro ao buscar personagem: {str(e)}")
 
 
-@app.delete("/characters/{character_id}")
+@app.delete("/characters/{character_id}", dependencies=[Depends(dono_ou_mestre)])
 async def delete_character(character_id: str):
     try:
         supabase.table("characters").delete().eq("id", character_id).execute()
@@ -813,7 +814,7 @@ async def delete_npc(npc_id: str):
         raise HTTPException(500, f"Erro ao deletar NPC: {str(e)}")
 
 
-@app.get("/skill-description/{skill_name}")
+@app.get("/skill-description/{skill_name}", dependencies=[Depends(usuario_atual)])
 async def get_skill_description(skill_name: str, system: str = "D&D 5e", character_context: str = ""):
     prompt = f"""
     Sistema: {system}
@@ -835,7 +836,7 @@ async def get_skill_description(skill_name: str, system: str = "D&D 5e", charact
     except Exception as e:
         raise HTTPException(500, f"Erro na IA: {str(e)}")
 
-@app.get("/spells")
+@app.get("/spells", dependencies=[Depends(usuario_atual)])
 async def get_spells(class_name: str = "Wizard"):
     result = supabase.table('spells').select('*').eq('class_name', class_name).execute()
     return {"success": True, "data": result.data}
@@ -887,7 +888,7 @@ async def get_sessions(campaign_id: str):
         raise HTTPException(500, f"Erro ao buscar sessões: {str(e)}")
 
 
-@app.get("/boato")
+@app.get("/boato", dependencies=[Depends(usuario_atual)])
 def gerar_boato():   # def, não async def: as chamadas ao Supabase e ao Gemini são bloqueantes
     # Busca contexto do mundo atual
     eventos_ativos = supabase.table("world_events").select("name, description, progress") \
@@ -1048,7 +1049,7 @@ class RulesRequest(BaseModel):
     query: str
     system: str = "D&D 5e"
 
-@app.post('/spells/homebrew')
+@app.post('/spells/homebrew', dependencies=[Depends(usuario_atual)])
 async def create_homebrew_spell(req: HombrewSpellRequest):
     prompt = f"""
     Você é um criador de conteúdo D&D 5e expert.
@@ -1107,7 +1108,7 @@ class ManualSpellRequest(BaseModel):
     duration: str = ""
     components: str = ""
 
-@app.post('/spells/manual')
+@app.post('/spells/manual', dependencies=[Depends(usuario_atual)])
 async def create_manual_spell(req: ManualSpellRequest):
     if not req.name.strip():
         raise HTTPException(400, "Nome da magia é obrigatório")
@@ -1304,7 +1305,7 @@ def profile_login(request: Request, req: ProfileLoginRequest):
         print(f"ERRO PROFILE LOGIN: {str(e)}")
         raise HTTPException(500, "Erro ao fazer login")
 
-@app.get("/secret-messages/{character_id}")
+@app.get("/secret-messages/{character_id}", dependencies=[Depends(dono_ou_mestre)])
 async def get_secret_messages(character_id: str):
     try:
         response = supabase.table("secret_messages").select("*").eq("character_id", character_id).eq("lida", False).execute()
@@ -1312,14 +1313,14 @@ async def get_secret_messages(character_id: str):
     except Exception as e:
         raise HTTPException(500, f"Erro ao buscar mensagens: {str(e)}")
 
-@app.get("/arquetipos/{class_name}")
+@app.get("/arquetipos/{class_name}", dependencies=[Depends(usuario_atual)])
 async def get_arquetipos(class_name: str):
     info = ARQUETIPOS_POR_CLASSE.get(class_name)
     if not info:
         return {"nivel": 3, "arquetipos": []}
     return info
 
-@app.patch("/secret-messages/{message_id}/lida")
+@app.patch("/secret-messages/{message_id}/lida", dependencies=[Depends(usuario_atual)])
 async def mark_as_read(message_id: str):
     try:
         supabase.table("secret_messages").update({"lida": True}).eq("id", message_id).execute()
@@ -1337,7 +1338,7 @@ async def delete_magic_item(item_id: str):
     except Exception as e:
         raise HTTPException(500, f"Erro ao deletar item: {str(e)}")
 
-@app.patch("/characters/{character_id}")
+@app.patch("/characters/{character_id}", dependencies=[Depends(dono_ou_mestre)])
 async def patch_character(character_id: str, req: dict = Body(...)):
     try:
         response = supabase.table("characters").update(req).eq("id", character_id).execute()
@@ -1661,7 +1662,7 @@ async def get_membros(campaign_id: str):
         raise HTTPException(500, f"Erro ao buscar membros: {str(e)}")
 
 
-@app.post("/push/subscribe")
+@app.post("/push/subscribe", dependencies=[Depends(usuario_atual)])
 async def salvar_subscription(data: dict = Body(...)):
     """
     Salva a assinatura do dispositivo do usuário.
@@ -1696,7 +1697,7 @@ async def salvar_subscription(data: dict = Body(...)):
         raise HTTPException(500, f"Erro ao salvar subscription: {str(e)}")
 
 
-@app.post("/notify/item")
+@app.post("/notify/item", dependencies=[Depends(usuario_atual)])
 async def notificar_item(data: dict = Body(...)):
     try:
         character_id = data.get("character_id")
@@ -1733,7 +1734,7 @@ async def notificar_item(data: dict = Body(...)):
         raise HTTPException(500, f"Erro ao notificar: {str(e)}")
 
 
-@app.post("/characters/{character_id}/avatar")
+@app.post("/characters/{character_id}/avatar", dependencies=[Depends(dono_ou_mestre)])
 async def upload_avatar(character_id: str, file: UploadFile = File(...)):
     try:
         contents = await file.read()
@@ -1844,7 +1845,7 @@ Responda APENAS com a descrição, sem título ou introdução."""
     except Exception as e:
         raise HTTPException(500, f"Erro ao gerar descrição: {str(e)}")
 
-@app.post("/aplicar-asi")
+@app.post("/aplicar-asi", dependencies=[Depends(usuario_atual)])
 @limiter.limit("10/minute")
 async def aplicar_asi(request: Request, req: AsiRequest):
     ficha = req.ficha_atual
@@ -2273,7 +2274,7 @@ class ConhecimentoRequest(BaseModel):
     topico: str
     system: str = "D&D 5e"
 
-@app.post("/personagem/conhecimento")
+@app.post("/personagem/conhecimento", dependencies=[Depends(usuario_atual)])
 async def verificar_conhecimento(req: ConhecimentoRequest):
     result = supabase.table("characters").select("*").eq("id", req.character_id).single().execute()
     char = result.data
@@ -2419,7 +2420,7 @@ async def enviar_handout(handout_id: str, body: EnviarHandoutRequest):
             print(f"[AVISO] Falha ao avisar: {e}")
 
 
-@app.get("/gallery/handouts-para/{character_id}")
+@app.get("/gallery/handouts-para/{character_id}", dependencies=[Depends(dono_ou_mestre)])
 def handouts_do_personagem(character_id: str):
     publicos = supabase.table("gallery").select("*") \
         .eq("campaign_id", CAMPANHA_ID).eq("type", "handout").eq("revealed", True).execute().data or []

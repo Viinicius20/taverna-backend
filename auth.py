@@ -4,6 +4,7 @@ import bcrypt
 import jwt
 from dotenv import load_dotenv
 from fastapi import Depends, Header, HTTPException
+from core import supabase
 
 load_dotenv()
 
@@ -54,3 +55,12 @@ def usuario_opcional(authorization: str = Header(None)):
         return jwt.decode(authorization[7:], JWT_SECRET, algorithms=[ALGORITMO])
     except jwt.PyJWTError:
         return None
+
+def dono_ou_mestre(character_id: str, user: dict = Depends(usuario_atual)) -> dict:
+    """Mestre passa sempre. Jogador só mexe no personagem que é dele."""
+    if user.get("role") == "mestre":
+        return user
+    r = supabase.table("characters").select("user_id").eq("id", character_id).limit(1).execute().data
+    if not r or r[0].get("user_id") != user.get("sub"):
+        raise HTTPException(403, "Este personagem não é seu")
+    return user

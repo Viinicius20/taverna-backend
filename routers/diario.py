@@ -2,6 +2,8 @@ from datetime import datetime
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from core import supabase, CAMPANHA_ID
+from auth import dono_ou_mestre
+from fastapi import Depends
 
 router = APIRouter(tags=["diario"])
 
@@ -34,7 +36,7 @@ def apresentar_npc(npc_id: str, body: ApresentarNpcReq):
     return {"success": True, "enviados": len(ids)}
 
 
-@router.get("/diario/{character_id}")
+@router.get("/diario/{character_id}", dependencies=[Depends(dono_ou_mestre)])
 def diario_do_personagem(character_id: str):
     fatos_raw = supabase.table("fatos_mundo").select("*") \
         .eq("campaign_id", CAMPANHA_ID).order("created_at", desc=True).execute().data or []
@@ -66,7 +68,7 @@ def diario_do_personagem(character_id: str):
     return {"success": True, "data": {"fatos": fatos, "npcs": npcs, "sessoes": sessoes, "notas": notas}}
 
 
-@router.put("/diario/{character_id}/nota")
+@router.put("/diario/{character_id}/nota", dependencies=[Depends(dono_ou_mestre)])
 def salvar_nota_diario(character_id: str, body: NotaDiarioReq):
     supabase.table("diario_notas").upsert({
         "character_id": character_id,

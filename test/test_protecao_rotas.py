@@ -47,6 +47,21 @@ PUBLICAS = [
     ("POST", "/downtime/{req_id}/marcar-visto"),
 ]
 
+DO_DONO = [
+    ("GET", "/characters/x"), ("PUT", "/characters/x"), ("PATCH", "/characters/x"),
+    ("DELETE", "/characters/x"), ("POST", "/characters/x/avatar"), ("GET", "/secret-messages/x"),
+    ("GET", "/diario/x"), ("PUT", "/diario/x/nota"),
+    ("GET", "/gallery/handouts-para/x"), ("GET", "/downtime/resolvidos-nao-vistos/x"),
+    ("POST", "/create-character"), ("POST", "/level-up"), ("POST", "/upload-pdf"),
+    ("POST", "/aplicar-asi"), ("POST", "/personagem/conhecimento"),
+    ("GET", "/spells"), ("POST", "/push/subscribe"), ("GET", "/boato"),
+]
+
+
+@pytest.mark.parametrize("metodo,caminho", DO_DONO)
+def test_exige_login(metodo, caminho):
+    r = client.request(metodo, caminho)
+    assert r.status_code == 401, f"{metodo} {caminho} respondeu {r.status_code}"
 
 @pytest.mark.parametrize("metodo,caminho", DO_MESTRE)
 def test_sem_token_responde_401(metodo, caminho):

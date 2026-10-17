@@ -12,6 +12,8 @@ from typing import Optional
 import json
 import random
 
+from auth import dono_ou_mestre
+
 router = APIRouter()
 
 
@@ -452,7 +454,7 @@ def resolver_downtime(req_id: str, req: DowntimeResolverReq):
     return {"data": r.data[0]}
 
 
-@router.get("/downtime/resolvidos-nao-vistos/{character_id}")
+@router.get("/downtime/resolvidos-nao-vistos/{character_id}", dependencies=[Depends(dono_ou_mestre)])
 def downtime_nao_vistos(character_id: str):
     r = supabase.table("downtime_requests").select("*") \
         .eq("character_id", character_id).neq("status", "pendente").eq("visto_jogador", False) \
