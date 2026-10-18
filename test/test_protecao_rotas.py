@@ -39,6 +39,7 @@ DO_MESTRE = [
     ("PUT", "/calendario/00000000-0000-0000-0000-000000000001/data"),
     ("PUT", "/calendario/00000000-0000-0000-0000-000000000001/meses"),
     ("GET", "/calendario/00000000-0000-0000-0000-000000000001/historico"),
+    ("PUT", "/world-events/x/prazo"),
 ]
 
 PUBLICAS = [

@@ -25,7 +25,7 @@ from datetime import datetime
 from utils import limpar_texto
 from utils import MAXIMO
 from core import supabase, CAMPANHA_ID
-from routers import wiki, fatos, diario, tv, mundo_vivo, mundo_fisico, extras, publica, cofre, calendario
+from routers import wiki, fatos, diario, tv, mundo_vivo, mundo_fisico, extras, publica, cofre, calendario, prazos
 from auth import usuario_opcional
 from servicos import ocultar_cofre
 
@@ -149,6 +149,7 @@ app.include_router(tv.router)
 app.include_router(publica.router)
 app.include_router(cofre.router)
 app.include_router(calendario.router)
+app.include_router(prazos.router)
 
 app.include_router(mundo_vivo.router)
 app.include_router(mundo_fisico.router)

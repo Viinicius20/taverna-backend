@@ -79,6 +79,26 @@ def calendario_atual(campaign_id: str) -> dict:
     data = converter_dia(linha["dia_total"], linha["meses"], linha["ano_inicial"])
     return {**linha, "data": data, "texto": formatar_data(data)}
 
+def avisar_prazos(campaign_id: str, dia_total: int, texto: str):
+    try:
+        vencidos = supabase.table("world_events").select("id, name") \
+            .eq("campaign_id", campaign_id).eq("status", "ativo").eq("prazo_avisado", False) \
+            .lte("data_alvo", dia_total).execute().data or []
+        if not vencidos:
+            return
+        ultima = supabase.table("sessions").select("session_number") \
+            .eq("campaign_id", campaign_id).order("session_number", desc=True).limit(1).execute().data
+        sessao = ultima[0]["session_number"] if ultima else 0
+        for ev in vencidos:
+            supabase.table("world_log").insert({
+                "campaign_id": campaign_id, "session_number": sessao,
+                "event_name": ev["name"],
+                "description": f"O prazo de \"{ev['name']}\" chegou ({texto}).",
+            }).execute()
+            supabase.table("world_events").update({"prazo_avisado": True}).eq("id", ev["id"]).execute()
+    except Exception as e:
+        print(f"[AVISO] Falha ao avisar prazos: {e}")
+
 
 def gravar_calendario(campaign_id: str, campos: dict, dias: int, motivo, antes: dict) -> dict:
     campos["updated_at"] = datetime.utcnow().isoformat()
@@ -88,6 +108,7 @@ def gravar_calendario(campaign_id: str, campos: dict, dias: int, motivo, antes: 
         "campaign_id": campaign_id, "dias": dias, "motivo": motivo,
         "data_antes": antes["texto"], "data_depois": depois["texto"],
     }).execute()
+    avisar_prazos(campaign_id, depois["dia_total"], depois["texto"])
     return depois
 
 

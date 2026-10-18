@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from typing import Optional
 import json
 import random
+from servicos import avancar_calendario, calendario_atual
 
 from auth import dono_ou_mestre
 
@@ -246,6 +247,11 @@ def avancar_dia(viagem_id: str):
         "status": status,
     }).eq("id", viagem_id).execute()
 
+    try:
+        avancar_calendario(viagem["campaign_id"], 1, "Viagem")
+    except Exception as e:
+        print(f"[AVISO] Falha ao avançar o calendário: {e}")
+
     return resp.data[0]
 
 
@@ -323,7 +329,8 @@ def gerar_gazeta(req: GazetaGerarReq):
             f"- {n.get('texto', '')}" for n in (anteriores[0]["noticias"] or []))
 
     nome = req.nome_jornal or "Gazeta do Reino"
-    contexto = "\n\n".join(partes)
+    texto_data = calendario_atual(cid)["texto"]
+    contexto = f"Data de hoje no mundo: {texto_data}\n\n" + "\n\n".join(partes)
 
     prompt = f"""Você é o redator de "{nome}", um jornal de um mundo de fantasia medieval.
 Com base no estado do mundo abaixo, escreva de 4 a 6 notícias curtas (1-2 frases cada), como leria
@@ -358,6 +365,7 @@ Retorne APENAS um JSON válido:
         "edicao": edicao,
         "noticias": dados.get("noticias") or [],
         "status": "rascunho",
+        "data_mundo": texto_data,
     }).execute()
     return {"data": r.data[0]}
 

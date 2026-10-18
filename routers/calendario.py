@@ -16,8 +16,8 @@ router = APIRouter(tags=["calendario"], dependencies=[Depends(campanha_valida)])
 
 
 class AvancarReq(BaseModel):
-    dias: int = Field(ge=1, le=3650)
-    motivo: Optional[str] = Field(default=None, max_length=200)
+    dias: int = Field(ge=1, le=365)
+    motivo: str = Field(default="", max_length=120)
 
 
 class DataReq(BaseModel):
@@ -35,6 +35,7 @@ def ver_calendario(campaign_id: str):
     cal = calendario_atual(campaign_id)
     return {"success": True, "data": {
         "data": cal["data"], "texto": cal["texto"], "meses": cal["meses"], "dia_total": cal["dia_total"],
+        "ano_inicial": cal["ano_inicial"],
     }}
 
 
