@@ -3,6 +3,8 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 from core import supabase
 
+from servicos import ocultar_cofre
+
 router = APIRouter(tags=["tv"])
 
 
@@ -30,9 +32,10 @@ def dados_tv(campaign_id: str):
         .eq("revealed", True).or_("type.is.null,type.neq.handout") \
         .limit(1).execute().data or []
 
-    hands = supabase.table("gallery").select("id, name, url, text_content") \
-        .eq("campaign_id", campaign_id).eq("type", "handout").eq("revealed", True) \
-        .order("created_at", desc=True).limit(1).execute().data or []
+    hands = supabase.table("gallery").select("id, name, url, text_content, cofre_hashes") \
+                .eq("campaign_id", campaign_id).eq("type", "handout").eq("revealed", True) \
+                .order("created_at", desc=True).limit(1).execute().data or []
+    hands = ocultar_cofre(hands, set())
 
     combate = {"ativo": False, "turno": 0, "combatentes": []}
     cs = supabase.table("combat_state").select("*").eq("campaign_id", campaign_id).limit(1).execute().data

@@ -25,7 +25,7 @@ from datetime import datetime
 from utils import limpar_texto
 from utils import MAXIMO
 from core import supabase, CAMPANHA_ID
-from routers import wiki, fatos, diario, tv, mundo_vivo, mundo_fisico, extras, publica
+from routers import wiki, fatos, diario, tv, mundo_vivo, mundo_fisico, extras, publica, cofre
 from auth import usuario_opcional
 
 
@@ -147,6 +147,7 @@ app.include_router(fatos.router)
 app.include_router(diario.router)
 app.include_router(tv.router)
 app.include_router(publica.router)
+app.include_router(cofre.router)
 
 app.include_router(mundo_vivo.router)
 app.include_router(mundo_fisico.router)
@@ -1495,6 +1496,7 @@ async def get_gallery(campaign_id: str = "", user: Optional[dict] = Depends(usua
         dados = query.execute().data or []
         if not user or user.get("role") != "mestre":
             dados = [i for i in dados if i.get("revealed")]
+            dados = ocultar_cofre(dados, set())
         return {"success": True, "data": dados}
     except Exception as e:
         raise HTTPException(500, f"Erro ao buscar galeria: {str(e)}")
@@ -2440,6 +2442,9 @@ def handouts_do_personagem(character_id: str):
         if g:
             vistos.setdefault(g["id"], g)
     lista = sorted(vistos.values(), key=lambda h: h.get("created_at") or "", reverse=True)
+    abertos = {r["handout_id"] for r in (supabase.table("handout_abertos").select("handout_id")
+               .eq("character_id", character_id).execute().data or [])}
+    lista = ocultar_cofre(lista, abertos)
     return {"success": True, "data": lista}
 
 

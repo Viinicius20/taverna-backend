@@ -34,6 +34,7 @@ DO_MESTRE = [
     ("GET", "/misterios"), ("POST", "/misterios"), ("PUT", "/misterios/x/pistas"), ("DELETE", "/misterios/x"),
     ("GET", "/notas-sessao"), ("POST", "/notas-sessao"), ("PATCH", "/notas-sessao/x"),
     ("DELETE", "/notas-sessao/x"), ("POST", "/notas-sessao/encerrar-sessao"),
+    ("POST", "/gallery/x/cofre"), ("DELETE", "/gallery/x/cofre"),
 ]
 
 PUBLICAS = [
@@ -57,6 +58,7 @@ DO_DONO = [
     ("POST", "/aplicar-asi"), ("POST", "/personagem/conhecimento"),
     ("GET", "/spells"), ("POST", "/push/subscribe"),
     ("PATCH", "/secret-messages/x/lida"), ("POST", "/notify/item"),
+    ("POST", "/gallery/x/abrir"),
 ]
 
 

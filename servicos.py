@@ -1,6 +1,8 @@
 from fastapi import HTTPException
 from core import supabase, CAMPANHA_ID
 from utils import estado_por_pontos, delta_do_evento, MAXIMO
+import re
+import unicodedata
 
 def ajustar_reputacao(tipo: str, entidade_id: str, delta: int, motivo: str, origem: str = "manual") -> dict:
     tabela, coluna = ("factions", "reputation_score") if tipo == "faction" else ("npcs", "relation_score")
@@ -47,3 +49,21 @@ def propagar_consequencias_evento(evento, campaign_id):
                 }).execute()
     except Exception as e:
         print(f"[AVISO] Falha ao propagar consequências: {e}")
+
+def normalizar_resposta(texto: str) -> str:
+    t = unicodedata.normalize("NFKD", texto or "")
+    t = "".join(c for c in t if not unicodedata.combining(c)).lower()
+    return re.sub(r"[^a-z0-9]+", "", t)
+
+
+def ocultar_cofre(handouts: list, abertos_ids: set) -> list:
+    saida = []
+    for h in handouts:
+        h = dict(h)
+        hashes = h.pop("cofre_hashes", None)
+        if hashes and h.get("id") not in abertos_ids:
+            h["bloqueado"] = True
+            h["text_content"] = None
+            h["url"] = None
+        saida.append(h)
+    return saida
