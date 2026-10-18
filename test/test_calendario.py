@@ -1,5 +1,12 @@
 from utils import converter_dia, para_dia_total, MESES_PADRAO
+from routers.calendario import _delta
 
+
+def test_desfazer_so_o_que_e_reversivel():
+    assert _delta({"dias": 7, "motivo": "Viagem"}) == 7
+    assert _delta({"dias": 0, "motivo": "Data definida pelo mestre", "dia_antes": 10, "dia_depois": 40}) == 30
+    assert _delta({"dias": 0, "motivo": "Data definida pelo mestre"}) is None
+    assert _delta({"dias": 0, "motivo": "Meses reconfigurados", "dia_antes": 1, "dia_depois": 2}) is None
 
 def test_ida_e_volta():
     for dia in (0, 29, 30, 359, 360, 1000, 123456):

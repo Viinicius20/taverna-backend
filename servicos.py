@@ -107,6 +107,7 @@ def gravar_calendario(campaign_id: str, campos: dict, dias: int, motivo, antes: 
     supabase.table("calendario_log").insert({
         "campaign_id": campaign_id, "dias": dias, "motivo": motivo,
         "data_antes": antes["texto"], "data_depois": depois["texto"],
+        "dia_antes": antes["dia_total"], "dia_depois": depois["dia_total"],
     }).execute()
     avisar_prazos(campaign_id, depois["dia_total"], depois["texto"])
     return depois
