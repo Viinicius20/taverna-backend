@@ -27,7 +27,7 @@ from utils import MAXIMO
 from core import supabase, CAMPANHA_ID
 from routers import wiki, fatos, diario, tv, mundo_vivo, mundo_fisico, extras, publica, cofre
 from auth import usuario_opcional
-
+from servicos import ocultar_cofre
 
 
 VELOCIDADE_KM_DIA = 40
@@ -2428,6 +2428,8 @@ async def enviar_handout(handout_id: str, body: EnviarHandoutRequest):
                 await enviar_push_notification(char_res.data["user_id"], "📜 Novo documento", nome)
         except Exception as e:
             print(f"[AVISO] Falha ao avisar: {e}")
+
+    return {"success": True, "enviados": len(destinatarios)}
 
 
 @app.get("/gallery/handouts-para/{character_id}", dependencies=[Depends(dono_ou_mestre)])
