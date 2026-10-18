@@ -1,8 +1,9 @@
 from fastapi import HTTPException
 from core import supabase, CAMPANHA_ID
-from utils import estado_por_pontos, delta_do_evento, MAXIMO
+from utils import estado_por_pontos, delta_do_evento, MAXIMO, converter_dia, formatar_data, MESES_PADRAO
 import re
 import unicodedata
+from datetime import datetime
 
 def ajustar_reputacao(tipo: str, entidade_id: str, delta: int, motivo: str, origem: str = "manual") -> dict:
     tabela, coluna = ("factions", "reputation_score") if tipo == "faction" else ("npcs", "relation_score")
@@ -67,3 +68,29 @@ def ocultar_cofre(handouts: list, abertos_ids: set) -> list:
             h["url"] = None
         saida.append(h)
     return saida
+
+def calendario_atual(campaign_id: str) -> dict:
+    r = supabase.table("calendario").select("*").eq("campaign_id", campaign_id).limit(1).execute().data
+    if r:
+        linha = r[0]
+    else:
+        linha = {"campaign_id": campaign_id, "dia_total": 0, "ano_inicial": 1, "meses": MESES_PADRAO}
+        supabase.table("calendario").insert(linha).execute()
+    data = converter_dia(linha["dia_total"], linha["meses"], linha["ano_inicial"])
+    return {**linha, "data": data, "texto": formatar_data(data)}
+
+
+def gravar_calendario(campaign_id: str, campos: dict, dias: int, motivo, antes: dict) -> dict:
+    campos["updated_at"] = datetime.utcnow().isoformat()
+    supabase.table("calendario").update(campos).eq("campaign_id", campaign_id).execute()
+    depois = calendario_atual(campaign_id)
+    supabase.table("calendario_log").insert({
+        "campaign_id": campaign_id, "dias": dias, "motivo": motivo,
+        "data_antes": antes["texto"], "data_depois": depois["texto"],
+    }).execute()
+    return depois
+
+
+def avancar_calendario(campaign_id: str, dias: int, motivo=None) -> dict:
+    antes = calendario_atual(campaign_id)
+    return gravar_calendario(campaign_id, {"dia_total": antes["dia_total"] + dias}, dias, motivo, antes)

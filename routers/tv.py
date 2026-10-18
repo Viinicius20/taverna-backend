@@ -4,6 +4,8 @@ from pydantic import BaseModel
 from core import supabase
 
 from servicos import ocultar_cofre
+from core import supabase, CAMPANHA_ID
+from servicos import ocultar_cofre, calendario_atual
 
 router = APIRouter(tags=["tv"])
 
@@ -54,14 +56,20 @@ def dados_tv(campaign_id: str):
                 "condicoes": x.get("condicoes") or [],
                 "hp_pct": pct,
             }
-            if x.get("tipo") == "jogador":      # só jogador mostra o número
+            if x.get("tipo") == "jogador":
                 item["hp_atual"] = hp_atual
                 item["hp_max"] = hp_max
             lista.append(item)
         combate = {"ativo": bool(cs[0]["combate_ativo"]), "turno": cs[0]["turno_atual"] or 0, "combatentes": lista}
 
+        try:
+            texto_data = calendario_atual(campaign_id)["texto"] if campaign_id == CAMPANHA_ID else None
+        except Exception:
+            texto_data = None
+
     return {"success": True, "data": {
         "imagem": imgs[0] if imgs else None,
         "handout": hands[0] if hands else None,
         "combate": combate,
+        "calendario": texto_data,
     }}

@@ -35,6 +35,10 @@ DO_MESTRE = [
     ("GET", "/notas-sessao"), ("POST", "/notas-sessao"), ("PATCH", "/notas-sessao/x"),
     ("DELETE", "/notas-sessao/x"), ("POST", "/notas-sessao/encerrar-sessao"),
     ("POST", "/gallery/x/cofre"), ("DELETE", "/gallery/x/cofre"),
+    ("POST", "/calendario/00000000-0000-0000-0000-000000000001/avancar"),
+    ("PUT", "/calendario/00000000-0000-0000-0000-000000000001/data"),
+    ("PUT", "/calendario/00000000-0000-0000-0000-000000000001/meses"),
+    ("GET", "/calendario/00000000-0000-0000-0000-000000000001/historico"),
 ]
 
 PUBLICAS = [
@@ -47,6 +51,7 @@ PUBLICAS = [
     ("GET", "/downtime/resolvidos-nao-vistos/{character_id}"),
     ("POST", "/downtime/{req_id}/marcar-visto"),
     ("GET", "/ficha-publica/{character_id}"),
+    ("GET", "/calendario/{campaign_id}"),
 ]
 
 DO_DONO = [
