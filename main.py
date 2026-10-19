@@ -24,8 +24,8 @@ from slowapi.errors import RateLimitExceeded
 from datetime import datetime
 from utils import limpar_texto
 from utils import MAXIMO
-from core import supabase, CAMPANHA_ID
-from routers import wiki, fatos, diario, tv, mundo_vivo, mundo_fisico, extras, publica, cofre, calendario, prazos, relacoes, npc_notas
+from core import supabase, CAMPANHA_ID, limiter
+from routers import wiki, fatos, diario, tv, mundo_vivo, mundo_fisico, extras, publica, cofre, calendario, prazos, relacoes, npc_notas, sessao_zero
 from auth import usuario_opcional
 from servicos import ocultar_cofre
 
@@ -130,7 +130,6 @@ COMBATE_PUBLICO = ("hp_max", "hp", "ac", "ca", "initiative", "speed",
 CAMPOS_NOTA = {"secret", "notes", "mood", "location", "spellcasting_ability", "spellcasting_dc"}
 
 
-limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter
 
 @app.exception_handler(RateLimitExceeded)
@@ -155,6 +154,7 @@ app.include_router(calendario.router)
 app.include_router(prazos.router)
 app.include_router(relacoes.router)
 app.include_router(npc_notas.router)
+app.include_router(sessao_zero.router)
 
 app.include_router(mundo_vivo.router)
 app.include_router(mundo_fisico.router)
