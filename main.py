@@ -25,10 +25,9 @@ from datetime import datetime
 from utils import limpar_texto
 from utils import MAXIMO
 from core import supabase, CAMPANHA_ID
-from routers import wiki, fatos, diario, tv, mundo_vivo, mundo_fisico, extras, publica, cofre, calendario, prazos
+from routers import wiki, fatos, diario, tv, mundo_vivo, mundo_fisico, extras, publica, cofre, calendario, prazos, relacoes, npc_notas
 from auth import usuario_opcional
 from servicos import ocultar_cofre
-from routers import relacoes
 
 
 VELOCIDADE_KM_DIA = 40
@@ -128,6 +127,9 @@ CAMPOS_PUBLICOS = ("name", "race", "class", "background", "level",
 COMBATE_PUBLICO = ("hp_max", "hp", "ac", "ca", "initiative", "speed",
                    "proficiency_bonus", "proficiency", "hit_dice")
 
+CAMPOS_NOTA = {"secret", "notes", "mood", "location", "spellcasting_ability", "spellcasting_dc"}
+
+
 limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter
 
@@ -152,6 +154,7 @@ app.include_router(cofre.router)
 app.include_router(calendario.router)
 app.include_router(prazos.router)
 app.include_router(relacoes.router)
+app.include_router(npc_notas.router)
 
 app.include_router(mundo_vivo.router)
 app.include_router(mundo_fisico.router)
@@ -2282,6 +2285,21 @@ async def remover_memoria_npc(req: RemoverMemoriaRequest):
 
     supabase.table("npcs").update({"data": d}).eq("id", req.npc_id).execute()
     return {"success": True, "data": memoria}
+
+class NotasNpc(BaseModel):
+    notas: dict[str, str]
+
+
+@app.patch("/npcs/{npc_id}/notas", dependencies=[Depends(exigir_mestre)])
+def salvar_notas_npc(npc_id: str, body: NotasNpc):
+    atual = supabase.table("npcs").select("data").eq("id", npc_id).limit(1).execute()
+    if not atual.data:
+        raise HTTPException(404, "NPC não encontrado")
+    notas = {k: str(v)[:2000] for k, v in body.notas.items() if k in CAMPOS_NOTA}
+    d = atual.data[0].get("data") or {}
+    d["notas_mestre"] = {**(d.get("notas_mestre") or {}), **notas}
+    supabase.table("npcs").update({"data": d}).eq("id", npc_id).execute()
+    return {"success": True}
 
 class ConhecimentoRequest(BaseModel):
     character_id: str

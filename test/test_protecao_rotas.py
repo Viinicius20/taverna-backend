@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 from main import app
 from auth import exigir_mestre, criar_token
 
+
 client = TestClient(app, raise_server_exceptions=False)
 
 DO_MESTRE = [
@@ -44,6 +45,9 @@ DO_MESTRE = [
     ("DELETE", "/calendario/00000000-0000-0000-0000-000000000001/historico"),
     ("DELETE", "/calendario/00000000-0000-0000-0000-000000000001/historico/x"),
     ("POST", "/calendario/00000000-0000-0000-0000-000000000001/voltar"),
+    ("GET", "/npc-notas/00000000-0000-0000-0000-000000000001"),
+    ("PUT", "/npc-notas/00000000-0000-0000-0000-000000000001/x"),
+    ("POST", "/npc-notas/00000000-0000-0000-0000-000000000001/migrar"),
 ]
 
 PUBLICAS = [
