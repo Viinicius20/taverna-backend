@@ -5,6 +5,8 @@ from core import supabase, CAMPANHA_ID
 from auth import dono_ou_mestre
 from fastapi import Depends
 
+from auth import dono_ou_mestre, exigir_mestre
+
 router = APIRouter(tags=["diario"])
 
 
@@ -18,7 +20,7 @@ class NotaDiarioReq(BaseModel):
     texto: str
 
 
-@router.post("/npcs/{npc_id}/apresentar")
+@router.post("/npcs/{npc_id}/apresentar", dependencies=[Depends(exigir_mestre)])
 def apresentar_npc(npc_id: str, body: ApresentarNpcReq):
     n = supabase.table("npcs").select("id").eq("id", npc_id).limit(1).execute().data
     if not n:
@@ -74,6 +76,6 @@ def salvar_nota_diario(character_id: str, body: NotaDiarioReq):
         "character_id": character_id,
         "session_number": body.session_number,
         "texto": body.texto[:5000],
-        "updated_at": datetime.utcnow().isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
     }, on_conflict="character_id,session_number").execute()
     return {"ok": True}
