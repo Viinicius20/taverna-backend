@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-
+import re
+from typing import Optional
 from auth import exigir_mestre
 from core import supabase
 
@@ -15,6 +16,8 @@ COLUNAS = {
 }
 VINCULOS = {"conhece", "aliado", "rival", "inimigo", "familia", "serve",
             "lidera", "teme", "deve_favor", "vive_em"}
+
+UUID_RE = re.compile(r"^[0-9a-fA-F-]{36}$")
 
 
 class RelacaoNova(BaseModel):
@@ -61,9 +64,24 @@ def criar_relacao(campaign_id: str, body: RelacaoNova):
     }).execute()
     return {"success": True, "data": res.data[0]}
 
+def filtrar_perspectiva(nos: dict, arestas: list, conhecidos: set, personagem_id: str):
+    """O que um jogador veria: personagens e NPCs que ele conhece, sem vínculos secretos."""
+    def pode(no):
+        if no["tipo"] == "character":
+            return True
+        return no["tipo"] == "npc" and no["id"].split(":", 1)[1] in conhecidos
+
+    permitidos = {k for k, v in nos.items() if pode(v)}
+    visiveis = [a for a in arestas
+                if not a["secret"] and a["source"] in permitidos and a["target"] in permitidos]
+    usados = {a["source"] for a in visiveis} | {a["target"] for a in visiveis}
+    eu = f"character:{personagem_id}"
+    if eu in nos:
+        usados.add(eu)
+    return {k: v for k, v in nos.items() if k in usados}, visiveis
 
 @router.get("/relacoes/{campaign_id}/grafo", dependencies=[Depends(exigir_mestre)])
-def grafo(campaign_id: str):
+def grafo(campaign_id: str, como: Optional[str] = None):
     arestas = supabase.table("relationships").select("*").eq("campaign_id", campaign_id).execute().data or []
 
     ids = {tipo: set() for tipo in TABELAS}
@@ -85,7 +103,6 @@ def grafo(campaign_id: str):
                 "score": r.get("relation_score") if tipo == "npc" else r.get("reputation_score"),
             }
 
-    # descarta vínculos cuja entidade foi apagada
     validas = [
         {"id": a["id"], "source": f"{a['source_type']}:{a['source_id']}",
          "target": f"{a['target_type']}:{a['target_id']}",
@@ -93,6 +110,13 @@ def grafo(campaign_id: str):
         for a in arestas
         if f"{a['source_type']}:{a['source_id']}" in nos and f"{a['target_type']}:{a['target_id']}" in nos
     ]
+
+    if como:
+        if not UUID_RE.match(como):
+            raise HTTPException(400, "Personagem inválido")
+        conhecidos = {r["npc_id"] for r in (supabase.table("npc_conhecidos").select("npc_id")
+                                            .eq("character_id", como).execute().data or [])}
+        nos, validas = filtrar_perspectiva(nos, validas, conhecidos, como)
     return {"success": True, "data": {"nos": list(nos.values()), "arestas": validas}}
 
 
