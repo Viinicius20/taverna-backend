@@ -25,7 +25,7 @@ from datetime import datetime
 from utils import limpar_texto
 from utils import MAXIMO
 from core import supabase, CAMPANHA_ID, limiter
-from routers import wiki, fatos, diario, tv, mundo_vivo, mundo_fisico, extras, publica, cofre, calendario, prazos, relacoes, npc_notas, sessao_zero
+from routers import wiki, fatos, diario, tv, mundo_vivo, mundo_fisico, extras, publica, cofre, calendario, prazos, relacoes, npc_notas, sessao_zero, health
 from auth import usuario_opcional
 from servicos import ocultar_cofre
 
@@ -155,6 +155,7 @@ app.include_router(prazos.router)
 app.include_router(relacoes.router)
 app.include_router(npc_notas.router)
 app.include_router(sessao_zero.router)
+app.include_router(health.router)
 
 app.include_router(mundo_vivo.router)
 app.include_router(mundo_fisico.router)
