@@ -4,7 +4,7 @@ from pydantic import BaseModel
 from core import supabase
 
 from servicos import ocultar_cofre
-from core import supabase, CAMPANHA_ID
+from core import supabase, campanha_atual
 from servicos import ocultar_cofre, calendario_atual
 
 router = APIRouter(tags=["tv"])
@@ -63,7 +63,7 @@ def dados_tv(campaign_id: str):
         combate = {"ativo": bool(cs[0]["combate_ativo"]), "turno": cs[0]["turno_atual"] or 0, "combatentes": lista}
 
         try:
-            texto_data = calendario_atual(campaign_id)["texto"] if campaign_id == CAMPANHA_ID else None
+            texto_data = calendario_atual(campaign_id)["texto"] if campaign_id == campanha_atual() else None
         except Exception:
             texto_data = None
 

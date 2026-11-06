@@ -2,7 +2,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from auth import exigir_mestre
-from core import supabase, CAMPANHA_ID
+from core import supabase, campanha_atual
 from servicos import calendario_atual, gravar_calendario, avancar_calendario
 from utils import para_dia_total
 from datetime import datetime
@@ -10,7 +10,7 @@ from utils import para_dia_total, MESES_PADRAO
 
 
 def campanha_valida(campaign_id: str):
-    if campaign_id != CAMPANHA_ID:
+    if campaign_id != campanha_atual():
         raise HTTPException(404, "Campanha não encontrada")
 
 

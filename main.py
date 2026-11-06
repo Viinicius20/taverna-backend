@@ -24,10 +24,11 @@ from slowapi.errors import RateLimitExceeded
 from datetime import datetime
 from utils import limpar_texto
 from utils import MAXIMO
-from core import supabase, CAMPANHA_ID, limiter
+from core import supabase, campanha_atual, limiter
 from routers import wiki, fatos, diario, tv, mundo_vivo, mundo_fisico, extras, publica, cofre, calendario, prazos, relacoes, npc_notas, sessao_zero, health
 from auth import usuario_opcional
 from servicos import ocultar_cofre
+from core import _campanha_ctx, CAMPANHA_PADRAO, UUID_RE
 
 
 VELOCIDADE_KM_DIA = 40
@@ -143,6 +144,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.middleware("http")
+async def campanha_middleware(request: Request, call_next):
+    valor = request.headers.get("x-campanha-id", "")
+    token = _campanha_ctx.set(valor if UUID_RE.match(valor) else CAMPANHA_PADRAO)
+    try:
+        return await call_next(request)
+    finally:
+        _campanha_ctx.reset(token)
 
 app.include_router(wiki.router)
 app.include_router(fatos.router)
@@ -907,11 +917,11 @@ async def get_sessions(campaign_id: str):
 @limiter.limit("10/minute")
 def gerar_boato(request: Request):
     eventos_ativos = supabase.table("world_events").select("name, description, progress") \
-        .eq("campaign_id", CAMPANHA_ID).eq("status", "ativo").execute().data
+        .eq("campaign_id", campanha_atual()).eq("status", "ativo").execute().data
     eventos_concluidos = supabase.table("world_events").select("name, consequences") \
-        .eq("campaign_id", CAMPANHA_ID).eq("status", "concluido").execute().data
+        .eq("campaign_id", campanha_atual()).eq("status", "concluido").execute().data
     flags_ativas = supabase.table("campaign_flags").select("key, description") \
-        .eq("campaign_id", CAMPANHA_ID).eq("value", True).execute().data
+        .eq("campaign_id", campanha_atual()).eq("value", True).execute().data
 
     # 1) lista de assuntos possíveis tirados do mundo
     candidatos = (
@@ -935,7 +945,7 @@ def gerar_boato(request: Request):
     # 2) memória: os boatos anteriores já ficam salvos em session_events
     try:
         recentes = supabase.table("session_events").select("descricao") \
-            .eq("campaign_id", CAMPANHA_ID).eq("tipo", "rumor") \
+            .eq("campaign_id", campanha_atual()).eq("tipo", "rumor") \
             .order("created_at", desc=True).limit(8).execute().data
     except Exception:
         recentes = []   # se a consulta falhar, o boato sai mesmo assim
@@ -959,7 +969,7 @@ Retorne APENAS um JSON: {{"boato": "frase curta", "fonte": "quem espalha"}}"""
 
         try:
             supabase.table("session_events").insert({
-                "campaign_id": CAMPANHA_ID,
+                "campaign_id": campanha_atual(),
                 "tipo": "rumor",
                 "descricao": f"Boato circulando: \"{boato_data.get('boato', '')}\" (fonte: {boato_data.get('fonte', 'desconhecida')})"
             }).execute()
@@ -1191,13 +1201,13 @@ async def generate_encounter(req: EncountroRequest):
     if req.usar_mundo:
         try:
             eventos = supabase.table("world_events").select("name, description, progress") \
-                .eq("campaign_id", CAMPANHA_ID).eq("status", "ativo").execute().data or []
+                .eq("campaign_id", campanha_atual()).eq("status", "ativo").execute().data or []
             flags = supabase.table("campaign_flags").select("key, description") \
-                .eq("campaign_id", CAMPANHA_ID).eq("value", True).execute().data or []
+                .eq("campaign_id", campanha_atual()).eq("value", True).execute().data or []
             regionais = supabase.table("eventos_regionais").select("regiao, tipo_evento, motivo") \
-                .eq("campaign_id", CAMPANHA_ID).eq("ativo", True).execute().data or []
+                .eq("campaign_id", campanha_atual()).eq("ativo", True).execute().data or []
             faccoes = supabase.table("factions").select("name, type, reputation") \
-                .eq("campaign_id", CAMPANHA_ID).execute().data or []
+                .eq("campaign_id", campanha_atual()).execute().data or []
 
             partes = []
             if eventos:
@@ -1650,19 +1660,26 @@ async def get_campanha(campaign_id: str):
 
 @app.post("/campaigns/join")
 async def entrar_campanha(data: dict = Body(...)):
+    codigo = (data.get("code") or "").strip().upper()
+    user_id = data.get("user_id")
+    if not codigo or not user_id:
+        raise HTTPException(400, "Código e usuário são obrigatórios")
+
     try:
-        # Busca campanha pelo código
-        res = supabase.table("campaigns").select("*").eq("code", data.get("code").upper()).single().execute()
+        res = supabase.table("campaigns").select("*").eq("code", codigo).limit(1).execute()
         if not res.data:
             raise HTTPException(404, "Campanha não encontrada")
-        campanha = res.data
+        campanha = res.data[0]
 
-        # Adiciona membro
-        supabase.table("campaign_members").insert({
-            "campaign_id": campanha["id"],
-            "user_id": data.get("user_id"),
-            "role": "jogador"
-        }).execute()
+        ja = (supabase.table("campaign_members").select("user_id")
+              .eq("campaign_id", campanha["id"]).eq("user_id", user_id)
+              .limit(1).execute().data)
+        if not ja:
+            supabase.table("campaign_members").insert({
+                "campaign_id": campanha["id"],
+                "user_id": user_id,
+                "role": "jogador"
+            }).execute()
 
         return {"success": True, "data": campanha}
     except HTTPException:
@@ -2423,7 +2440,7 @@ async def enviar_handout(handout_id: str, body: EnviarHandoutRequest):
 
     if body.todos:
         supabase.table("gallery").update({"revealed": True}).eq("id", handout_id).execute()
-        destinatarios = [c["id"] for c in (supabase.table("characters").select("id").eq("campaign_id", CAMPANHA_ID).execute().data or [])]
+        destinatarios = [c["id"] for c in (supabase.table("characters").select("id").eq("campaign_id", campanha_atual()).execute().data or [])]
     else:
         ids = list(dict.fromkeys(body.character_ids))[:50]
         if not ids:
@@ -2440,7 +2457,7 @@ async def enviar_handout(handout_id: str, body: EnviarHandoutRequest):
     for cid in destinatarios:
         try:
             supabase.table("secret_messages").insert({
-                "campaign_id": CAMPANHA_ID,
+                "campaign_id": campanha_atual(),
                 "character_id": cid,
                 "message": f"📜 Você recebeu um documento: {nome}. Veja na aba Documentos da sua ficha.",
                 "lida": False,
@@ -2458,7 +2475,7 @@ async def enviar_handout(handout_id: str, body: EnviarHandoutRequest):
 @app.get("/gallery/handouts-para/{character_id}", dependencies=[Depends(dono_ou_mestre)])
 def handouts_do_personagem(character_id: str):
     publicos = supabase.table("gallery").select("*") \
-        .eq("campaign_id", CAMPANHA_ID).eq("type", "handout").eq("revealed", True).execute().data or []
+        .eq("campaign_id", campanha_atual()).eq("type", "handout").eq("revealed", True).execute().data or []
     diretos = supabase.table("handout_recipients").select("gallery(*)") \
         .eq("character_id", character_id).execute().data or []
     vistos = {h["id"]: h for h in publicos}

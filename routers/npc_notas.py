@@ -3,7 +3,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from auth import exigir_mestre
-from core import supabase, CAMPANHA_ID
+from core import supabase, campanha_atual
 
 router = APIRouter(tags=["npc-notas"], dependencies=[Depends(exigir_mestre)])
 
@@ -31,7 +31,7 @@ def _limpar(notas: dict) -> dict:
 
 
 def _campanha(campaign_id: str):
-    if campaign_id != CAMPANHA_ID:
+    if campaign_id != campanha_atual():
         raise HTTPException(404, "Campanha não encontrada")
 
 

@@ -1,5 +1,5 @@
 from fastapi import HTTPException
-from core import supabase, CAMPANHA_ID
+from core import supabase, campanha_atual
 from utils import estado_por_pontos, delta_do_evento, MAXIMO, converter_dia, formatar_data, MESES_PADRAO
 import re
 import unicodedata
@@ -18,7 +18,7 @@ def ajustar_reputacao(tipo: str, entidade_id: str, delta: int, motivo: str, orig
             dados["reputation"] = estado_por_pontos(depois)   # o que já lê esse campo continua funcionando
         supabase.table(tabela).update(dados).eq("id", entidade_id).execute()
         supabase.table("reputation_log").insert({
-            "campaign_id": CAMPANHA_ID, "entity_type": tipo, "entity_id": entidade_id,
+            "campaign_id": campanha_atual(), "entity_type": tipo, "entity_id": entidade_id,
             "delta": depois - antes, "score_after": depois,
             "reason": motivo[:300], "source": origem,
         }).execute()

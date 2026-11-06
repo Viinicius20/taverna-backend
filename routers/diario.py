@@ -1,7 +1,7 @@
 from datetime import datetime
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from core import supabase, CAMPANHA_ID
+from core import supabase, campanha_atual
 from auth import dono_ou_mestre
 from fastapi import Depends
 
@@ -27,7 +27,7 @@ def apresentar_npc(npc_id: str, body: ApresentarNpcReq):
         raise HTTPException(404, "NPC não encontrado")
     if body.todos:
         ids = [c["id"] for c in (supabase.table("characters").select("id")
-               .eq("campaign_id", CAMPANHA_ID).execute().data or [])]
+               .eq("campaign_id", campanha_atual()).execute().data or [])]
     else:
         ids = list(dict.fromkeys(body.character_ids))[:50]
     if not ids:
@@ -41,7 +41,7 @@ def apresentar_npc(npc_id: str, body: ApresentarNpcReq):
 @router.get("/diario/{character_id}", dependencies=[Depends(dono_ou_mestre)])
 def diario_do_personagem(character_id: str):
     fatos_raw = supabase.table("fatos_mundo").select("*") \
-        .eq("campaign_id", CAMPANHA_ID).order("created_at", desc=True).execute().data or []
+        .eq("campaign_id", campanha_atual()).order("created_at", desc=True).execute().data or []
     fatos = [
         {"id": f["id"], "texto": f["texto"]}
         for f in fatos_raw
@@ -63,7 +63,7 @@ def diario_do_personagem(character_id: str):
             })
 
     sessoes = supabase.table("sessions").select("session_number, title") \
-        .eq("campaign_id", CAMPANHA_ID).order("session_number", desc=True).execute().data or []
+        .eq("campaign_id", campanha_atual()).order("session_number", desc=True).execute().data or []
     notas = supabase.table("diario_notas").select("session_number, texto") \
         .eq("character_id", character_id).execute().data or []
 

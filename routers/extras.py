@@ -1,6 +1,6 @@
 from auth import MESTRE
 from auth import exigir_mestre
-from core import CAMPANHA_ID
+from core import campanha_atual
 from core import supabase
 from datetime import datetime
 from fastapi import APIRouter
@@ -479,7 +479,7 @@ def marcar_downtime_visto(req_id: str):
 @router.get("/misterios", dependencies=[Depends(exigir_mestre)])
 def listar_misterios():
     res = supabase.table("mysteries").select("*, npcs(name), locations(name)") \
-        .eq("campaign_id", CAMPANHA_ID).order("created_at", desc=True).execute()
+        .eq("campaign_id", campanha_atual()).order("created_at", desc=True).execute()
     return {"success": True, "data": res.data or []}
 
 
@@ -489,7 +489,7 @@ def criar_misterio(body: MisterioNovo):
     if not titulo:
         raise HTTPException(400, "Título obrigatório")
     res = supabase.table("mysteries").insert({
-        "campaign_id": CAMPANHA_ID,
+        "campaign_id": campanha_atual(),
         "title": titulo[:200],
         "description": body.description.strip()[:2000],
         "clues_total": max(1, min(body.clues_total, 50)),
@@ -502,7 +502,7 @@ def criar_misterio(body: MisterioNovo):
 @router.put("/misterios/{misterio_id}/pistas", dependencies=[Depends(exigir_mestre)])
 def atualizar_pistas(misterio_id: str, body: MisterioPistas):
     atual = supabase.table("mysteries").select("clues_total") \
-        .eq("id", misterio_id).eq("campaign_id", CAMPANHA_ID).limit(1).execute()
+        .eq("id", misterio_id).eq("campaign_id", campanha_atual()).limit(1).execute()
     if not atual.data:
         raise HTTPException(404, "Mistério não encontrado")
     total = atual.data[0]["clues_total"]
@@ -510,21 +510,21 @@ def atualizar_pistas(misterio_id: str, body: MisterioPistas):
     res = supabase.table("mysteries").update({
         "clues_found": found,
         "status": "resolvido" if found >= total else "aberto",
-    }).eq("id", misterio_id).eq("campaign_id", CAMPANHA_ID).execute()
+    }).eq("id", misterio_id).eq("campaign_id", campanha_atual()).execute()
     return {"success": True, "data": res.data[0]}
 
 
 @router.delete("/misterios/{misterio_id}", dependencies=[Depends(exigir_mestre)])
 def deletar_misterio(misterio_id: str):
     supabase.table("mysteries").delete() \
-        .eq("id", misterio_id).eq("campaign_id", CAMPANHA_ID).execute()
+        .eq("id", misterio_id).eq("campaign_id", campanha_atual()).execute()
     return {"success": True}
 
 
 @router.get("/notas-sessao", dependencies=[Depends(exigir_mestre)])
 def listar_notas():
     res = supabase.table("session_notes").select("*") \
-        .eq("campaign_id", CAMPANHA_ID).eq("done", False) \
+        .eq("campaign_id", campanha_atual()).eq("done", False) \
         .order("created_at").execute()
     return {"success": True, "data": res.data or []}
 
@@ -537,7 +537,7 @@ def criar_nota(body: NotaNova):
     cor = body.color if body.color in CORES_NOTA else "amarelo"
     sessoes = None if body.sessions_left is None else max(0, min(body.sessions_left, 99))
     res = supabase.table("session_notes").insert({
-        "campaign_id": CAMPANHA_ID, "text": texto[:300], "color": cor, "sessions_left": sessoes,
+        "campaign_id": campanha_atual(), "text": texto[:300], "color": cor, "sessions_left": sessoes,
     }).execute()
     return {"success": True, "data": res.data[0]}
 
@@ -556,21 +556,21 @@ def editar_nota(nota_id: str, body: NotaEdit):
         updates["color"] = body.color
     if updates:
         supabase.table("session_notes").update(updates) \
-            .eq("id", nota_id).eq("campaign_id", CAMPANHA_ID).execute()
+            .eq("id", nota_id).eq("campaign_id", campanha_atual()).execute()
     return {"success": True}
 
 
 @router.delete("/notas-sessao/{nota_id}", dependencies=[Depends(exigir_mestre)])
 def apagar_nota(nota_id: str):
     supabase.table("session_notes").delete() \
-        .eq("id", nota_id).eq("campaign_id", CAMPANHA_ID).execute()
+        .eq("id", nota_id).eq("campaign_id", campanha_atual()).execute()
     return {"success": True}
 
 
 @router.post("/notas-sessao/encerrar-sessao", dependencies=[Depends(exigir_mestre)])
 def encerrar_sessao_notas():
     res = supabase.table("session_notes").select("id, sessions_left") \
-        .eq("campaign_id", CAMPANHA_ID).eq("done", False).gt("sessions_left", 0).execute()
+        .eq("campaign_id", campanha_atual()).eq("done", False).gt("sessions_left", 0).execute()
     for n in res.data or []:
         supabase.table("session_notes").update({"sessions_left": n["sessions_left"] - 1}) \
             .eq("id", n["id"]).execute()
