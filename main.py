@@ -5,6 +5,7 @@ import random
 import string
 import tempfile
 import urllib.parse
+from historico import registrar_alteracoes
 from servicos import ajustar_reputacao, propagar_consequencias_evento
 from ia import gerar_texto_com_gemini, gerar_json_com_gemini
 from auth import confere_senha, criar_token, exigir_mestre, MESTRE, usuario_atual, usuario_opcional, dono_ou_mestre, dono_da_lista, checar_campanha
@@ -369,16 +370,22 @@ async def create_character(request: Request, req: CreateCharacterRequest):
         raise HTTPException(500, "Erro ao criar personagem")
 
 
+def _linha_atual(character_id: str) -> dict:
+    r = supabase.table("characters").select("name,data,campaign_id").eq("id", character_id).limit(1).execute().data
+    return r[0] if r else {}
+
+
 @app.put("/characters/{character_id}", dependencies=[Depends(dono_ou_mestre)])
-async def update_character(character_id: str, req: UpdateCharacterRequest):
+async def update_character(character_id: str, req: UpdateCharacterRequest, user: dict = Depends(usuario_atual)):
     try:
-        print(f"SALVANDO: ataques={req.data.get('ataques')}, notas={req.data.get('notas_privadas')}")
+        antigo = _linha_atual(character_id)
         update_data = {"data": req.data}
         if req.name:
             update_data["name"] = req.name
         if req.system:
             update_data["system"] = req.system
         response = supabase.table("characters").update(update_data).eq("id", character_id).execute()
+        registrar_alteracoes(character_id, antigo.get("campaign_id"), user["sub"], antigo, update_data)
         return {"success": True, "data": response.data}
     except Exception as e:
         raise HTTPException(500, f"Erro ao atualizar personagem: {str(e)}")
@@ -1410,10 +1417,16 @@ async def delete_magic_item(item_id: str):
     except Exception as e:
         raise HTTPException(500, f"Erro ao deletar item: {str(e)}")
 
+CAMPOS_LIVRES = {"name", "data", "system", "avatar_url", "pdf_url"}
+
 @app.patch("/characters/{character_id}", dependencies=[Depends(dono_ou_mestre)])
-async def patch_character(character_id: str, req: dict = Body(...)):
+async def patch_character(character_id: str, req: dict = Body(...), user: dict = Depends(usuario_atual)):
+    if user.get("role") != "mestre" and set(req) - CAMPOS_LIVRES:
+        raise HTTPException(403, "Campo não permitido")   # fora do try, senão vira 500
     try:
+        antigo = _linha_atual(character_id)
         response = supabase.table("characters").update(req).eq("id", character_id).execute()
+        registrar_alteracoes(character_id, antigo.get("campaign_id"), user["sub"], antigo, req)
         return {"success": True, "data": response.data}
     except Exception as e:
         raise HTTPException(500, f"Erro ao atualizar: {str(e)}")
@@ -1837,6 +1850,22 @@ async def upload_avatar(character_id: str, file: UploadFile = File(...)):
         import traceback
         traceback.print_exc()
         raise HTTPException(500, f"Erro ao fazer upload do avatar: {str(e)}")
+
+@app.get("/characters/{character_id}/historico", dependencies=[Depends(dono_ou_mestre)])
+async def historico_ficha(character_id: str, limite: int = 100):
+    limite = max(1, min(limite, 300))
+    linhas = (supabase.table("ficha_log")
+              .select("id,campo,valor_antigo,valor_novo,user_id,created_at")
+              .eq("character_id", character_id)
+              .order("created_at", desc=True).limit(limite).execute().data or [])
+    ids = list({r["user_id"] for r in linhas if r.get("user_id")})
+    nomes = {}
+    if ids:
+        for p in supabase.table("profiles").select("id,username").in_("id", ids).execute().data or []:
+            nomes[p["id"]] = p["username"]
+    for r in linhas:
+        r["autor"] = nomes.get(r.get("user_id"), "?")
+    return {"success": True, "data": linhas}
 
 
 @app.get("/push/vapid-public-key")

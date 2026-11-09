@@ -73,6 +73,7 @@ DO_DONO = [
     ("GET", "/spells"), ("POST", "/push/subscribe"),
     ("PATCH", "/secret-messages/x/lida"), ("POST", "/notify/item"),
     ("POST", "/gallery/x/abrir"),
+    ("GET", "/characters/x/historico"),
 ]
 
 
