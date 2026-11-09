@@ -5,13 +5,12 @@ import random
 import string
 import tempfile
 import urllib.parse
-from fastapi import Depends
 from servicos import ajustar_reputacao, propagar_consequencias_evento
 from ia import gerar_texto_com_gemini, gerar_json_com_gemini
-from auth import confere_senha, criar_token, exigir_mestre, MESTRE, usuario_atual, dono_ou_mestre
+from auth import confere_senha, criar_token, exigir_mestre, MESTRE, usuario_atual, usuario_opcional, dono_ou_mestre, dono_da_lista, checar_campanha
 from pywebpush import webpush, WebPushException
 from google.genai.errors import ServerError, ClientError
-from fastapi import FastAPI, HTTPException, UploadFile, File, Request, Body, Form
+from fastapi import FastAPI, HTTPException, UploadFile, File, Request, Body, Form, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from typing import Optional
@@ -26,7 +25,7 @@ from utils import limpar_texto
 from utils import MAXIMO
 from core import supabase, campanha_atual, limiter
 from routers import wiki, fatos, diario, tv, mundo_vivo, mundo_fisico, extras, publica, cofre, calendario, prazos, relacoes, npc_notas, sessao_zero, health
-from auth import usuario_opcional
+from auth import usuario_atual, dono_da_lista, checar_campanha
 from servicos import ocultar_cofre
 from core import _campanha_ctx, CAMPANHA_PADRAO, UUID_RE
 
@@ -83,7 +82,7 @@ def get_vapid_private_key_object():
     return load_pem_private_key(pem, password=None)
 
 # ===================== CONFIG =====================
-app = FastAPI(title="RPG IA - Backend")
+app = FastAPI(title="Taverna", dependencies=[Depends(checar_campanha)])
 
 ARQUETIPOS_POR_CLASSE = {
     "Guerreiro": {"nivel": 3, "arquetipos": ["Campeão", "Cavaleiro Arcano", "Mestre de Batalha", "Cavaleiro Eldritch", "Samurai", "Lutador", "Cavaleiro Rúnico", "Guerreiro Psíquico"]},
@@ -725,15 +724,16 @@ Retorne APENAS o JSON, sem explicações.
         raise HTTPException(500, f"Erro ao processar NPC: {str(e)}")
 
 @app.get("/characters")
-async def list_characters(user_id: str = "", campaign_id: str = "", sem_dono: bool = False):
+async def list_characters(user: dict = Depends(usuario_atual), user_id: str = "", sem_dono: bool = False):
     try:
-        query = supabase.table("characters").select("*")
-        if user_id:
-            query = query.eq("user_id", user_id)
-        if campaign_id:
-            query = query.eq("campaign_id", campaign_id)
-        if sem_dono:
-            query = query.is_("user_id", "null")
+        query = supabase.table("characters").select("*").eq("campaign_id", campanha_atual())
+        if user.get("role") != "mestre":
+            query = query.eq("user_id", user["sub"])
+        else:
+            if user_id:
+                query = query.eq("user_id", user_id)
+            if sem_dono:
+                query = query.is_("user_id", "null")
         response = query.order("created_at", desc=True).execute()
         return {"success": True, "data": response.data}
     except Exception as e:
@@ -1641,7 +1641,7 @@ async def criar_campanha(data: dict = Body(...)):
         raise HTTPException(500, f"Erro ao criar campanha: {str(e)}")
 
 
-@app.get("/campaigns/by-owner/{owner_id}")
+@app.get("/campaigns/by-owner/{owner_id}", dependencies=[Depends(dono_da_lista)])
 async def get_campanhas_by_owner(owner_id: str):
     try:
         res = supabase.table("campaigns").select("*").eq("owner_id", owner_id).execute()
@@ -1649,7 +1649,7 @@ async def get_campanhas_by_owner(owner_id: str):
     except Exception as e:
         raise HTTPException(500, f"Erro ao buscar campanhas: {str(e)}")
 
-@app.get("/campaigns/{campaign_id}")
+@app.get("/campaigns/{campaign_id}", dependencies=[Depends(usuario_atual)])
 async def get_campanha(campaign_id: str):
     try:
         res = supabase.table("campaigns").select("*").eq("id", campaign_id).single().execute()
@@ -1659,11 +1659,11 @@ async def get_campanha(campaign_id: str):
 
 
 @app.post("/campaigns/join")
-async def entrar_campanha(data: dict = Body(...)):
+async def entrar_campanha(data: dict = Body(...), user: dict = Depends(usuario_atual)):
     codigo = (data.get("code") or "").strip().upper()
-    user_id = data.get("user_id")
-    if not codigo or not user_id:
-        raise HTTPException(400, "Código e usuário são obrigatórios")
+    user_id = user["sub"]          # vem do token, não do corpo
+    if not codigo:
+        raise HTTPException(400, "Código obrigatório")
 
     try:
         res = supabase.table("campaigns").select("*").eq("code", codigo).limit(1).execute()

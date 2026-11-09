@@ -3,8 +3,9 @@ import time
 import bcrypt
 import jwt
 from dotenv import load_dotenv
-from fastapi import Depends, Header, HTTPException
+from fastapi import Depends, Header, HTTPException, Request
 from core import supabase
+
 
 load_dotenv()
 
@@ -13,7 +14,9 @@ if not JWT_SECRET:
     raise RuntimeError("Defina a variável de ambiente JWT_SECRET")
 
 ALGORITMO = "HS256"
-DURACAO_SEGUNDOS = 60 * 60 * 24 * 7   # 7 dias
+DURACAO_SEGUNDOS = 60 * 60 * 24 * 7
+_cache_membro: dict = {}
+_ABERTAS = ("/profiles", "/campaigns/join", "/campaigns/by-owner", "/docs", "/openapi.json", "/redoc")
 
 
 def hash_senha(senha: str) -> str:
@@ -63,4 +66,32 @@ def dono_ou_mestre(character_id: str, user: dict = Depends(usuario_atual)) -> di
     r = supabase.table("characters").select("user_id").eq("id", character_id).limit(1).execute().data
     if not r or r[0].get("user_id") != user.get("sub"):
         raise HTTPException(403, "Este personagem não é seu")
+    return user
+
+def checar_campanha(request: Request, authorization: str = Header(None)):
+    if request.method == "OPTIONS" or request.url.path.startswith(_ABERTAS) or request.url.path == "/":
+        return
+    user = usuario_opcional(authorization)
+    if not user:
+        return  # as rotas protegidas devolvem 401 sozinhas
+    from core import campanha_atual
+    camp, uid = campanha_atual(), user["sub"]
+    chave = (uid, camp)
+    agora = time.time()
+    if _cache_membro.get(chave, 0) > agora:
+        return
+    try:
+        membro = supabase.table("campaign_members").select("user_id").eq("campaign_id", camp).eq("user_id", uid).limit(
+            1).execute().data
+        dono = supabase.table("campaigns").select("id").eq("id", camp).eq("owner_id", uid).limit(1).execute().data
+    except Exception:
+        raise HTTPException(503, "Não foi possível validar a campanha agora")
+    if not (membro or dono):
+        raise HTTPException(403, "Você não faz parte desta campanha")
+    _cache_membro[chave] = agora + 60
+
+
+def dono_da_lista(owner_id: str, user: dict = Depends(usuario_atual)) -> dict:
+    if user["sub"] != owner_id:
+        raise HTTPException(403, "Acesso negado")
     return user
