@@ -1,7 +1,7 @@
 from fastapi.routing import APIRoute
 from main import app
 
-ABERTAS_DE_PROPOSITO = {("POST", "/profiles/login")}
+ABERTAS_DE_PROPOSITO = {("POST", "/profiles/login"), ("POST", "/profiles/definir-senha")}
 
 def test_rotas_de_escrita_tem_dependencia():
     abertas = sorted(

@@ -1303,26 +1303,30 @@ class ProfileLoginRequest(BaseModel):
     password: Optional[str] = None
 
 
+class DefinirSenhaRequest(BaseModel):
+    username: str
+    password: str
+
+
 @app.post("/profiles/login")
 @limiter.limit("8/minute")
 def profile_login(request: Request, req: ProfileLoginRequest):
     try:
-        res = supabase.table("profiles").select("*").eq("username", req.username).execute()
+        res = supabase.table("profiles").select("*").eq("username", req.username).limit(1).execute()
 
-        if res.data:
-            perfil = res.data[0]
-            if perfil.get("password_hash"):
-                if not req.password:
-                    raise HTTPException(401, "SENHA_NECESSARIA")
-                if not confere_senha(req.password, perfil["password_hash"]):
-                    raise HTTPException(401, "Senha incorreta")
+        if not res.data:
+            raise HTTPException(401, "DEFINIR_SENHA")   # nome novo: escolhe senha
+
+        perfil = res.data[0]
+        if perfil.get("password_hash"):
+            if not req.password:
+                raise HTTPException(401, "SENHA_NECESSARIA")
+            if not confere_senha(req.password, perfil["password_hash"]):
+                raise HTTPException(401, "Senha incorreta")
+        elif perfil.get("role") == "mestre":
+            raise HTTPException(403, "Perfil de mestre sem senha definida")
         else:
-            novo = supabase.table("profiles").insert({
-                "id": str(uuid.uuid4()),
-                "username": req.username,
-                "role": "jogador"
-            }).execute()
-            perfil = novo.data[0]
+            raise HTTPException(401, "DEFINIR_SENHA")   # existe, mas sem senha ainda
 
         publico = {k: v for k, v in perfil.items() if k != "password_hash"}
         return {"success": True, "data": publico, "token": criar_token(perfil)}
@@ -1331,6 +1335,47 @@ def profile_login(request: Request, req: ProfileLoginRequest):
     except Exception as e:
         print(f"ERRO PROFILE LOGIN: {str(e)}")
         raise HTTPException(500, "Erro ao fazer login")
+
+
+@app.post("/profiles/definir-senha")
+@limiter.limit("5/minute")
+def profile_definir_senha(request: Request, req: DefinirSenhaRequest):
+    username = req.username.strip()
+    if not username:
+        raise HTTPException(400, "Informe o nome")
+    if len(req.password) < 6 or len(req.password.encode()) > 72:
+        raise HTTPException(400, "A senha precisa ter de 6 a 72 caracteres")
+    try:
+        res = supabase.table("profiles").select("*").eq("username", username).limit(1).execute()
+        senha_hash = hash_senha(req.password)
+
+        if res.data:
+            perfil = res.data[0]
+            if perfil.get("password_hash"):
+                raise HTTPException(409, "Este perfil já tem senha")
+            if perfil.get("role") == "mestre":
+                raise HTTPException(403, "A senha do mestre não pode ser definida aqui")
+            # .is_(..., "null") deixa a troca atômica: só vale se ainda não houver senha
+            upd = (supabase.table("profiles").update({"password_hash": senha_hash})
+                   .eq("id", perfil["id"]).is_("password_hash", "null").execute().data)
+            if not upd:
+                raise HTTPException(409, "Este perfil já tem senha")
+            perfil = upd[0]
+        else:
+            perfil = supabase.table("profiles").insert({
+                "id": str(uuid.uuid4()),
+                "username": username,
+                "role": "jogador",
+                "password_hash": senha_hash,
+            }).execute().data[0]
+
+        publico = {k: v for k, v in perfil.items() if k != "password_hash"}
+        return {"success": True, "data": publico, "token": criar_token(perfil)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"ERRO DEFINIR SENHA: {str(e)}")
+        raise HTTPException(500, "Erro ao definir senha")
 
 @app.get("/secret-messages/{character_id}", dependencies=[Depends(dono_ou_mestre)])
 async def get_secret_messages(character_id: str):
