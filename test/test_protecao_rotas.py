@@ -61,6 +61,8 @@ PUBLICAS = [
     ("POST", "/downtime/{req_id}/marcar-visto"),
     ("GET", "/ficha-publica/{character_id}"),
     ("GET", "/calendario/{campaign_id}"),
+    ("GET", "/rolagens"),
+    ("POST", "/rolagens"),
 ]
 
 DO_DONO = [
