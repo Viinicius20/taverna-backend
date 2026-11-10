@@ -4,7 +4,7 @@ from typing import Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
-from auth import usuario_atual
+from auth import exigir_mestre, usuario_atual
 from core import supabase, campanha_atual, limiter
 from motor_dados import ExpressaoInvalida, rolar
 
@@ -76,3 +76,12 @@ def listar_rolagens(depois: str = "", limite: int = 50, user: dict = Depends(usu
         print(f"ERRO LISTAR ROLAGENS: {e}")
         raise HTTPException(500, "Erro ao buscar rolagens")
     return {"success": True, "data": linhas}
+
+@router.delete("", dependencies=[Depends(exigir_mestre)])
+def limpar_rolagens():
+    try:
+        supabase.table("rolagens").delete().eq("campaign_id", campanha_atual()).execute()
+    except Exception as e:
+        print(f"ERRO LIMPAR ROLAGENS: {e}")
+        raise HTTPException(500, "Erro ao limpar rolagens")
+    return {"success": True}
