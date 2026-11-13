@@ -5,6 +5,7 @@ import random
 import string
 import tempfile
 import urllib.parse
+import time
 from historico import registrar_alteracoes
 from servicos import ajustar_reputacao, propagar_consequencias_evento
 from ia import gerar_texto_com_gemini, gerar_json_com_gemini
@@ -33,6 +34,9 @@ from core import _campanha_ctx, CAMPANHA_PADRAO, UUID_RE
 
 VELOCIDADE_KM_DIA = 40
 CHANCE_EVENTO_POR_DIA = 0.35
+
+_cache_monstro = {"ate": 0.0, "dado": None}
+CACHE_MONSTRO_SEGUNDOS = 600
 
 
 REPUTACOES = {"aliada", "neutra", "hostil"}
@@ -1924,8 +1928,11 @@ async def enviar_push_notification(user_id: str, titulo: str, mensagem: str):
         print(f"Erro no push notification: {str(e)}")
 
 
-@app.get("/bestiary/random-description", dependencies=MESTRE)
+@app.get("/bestiary/random-description", dependencies=[Depends(usuario_atual)])
 def bestiary_random_description():
+    agora = time.time()
+    if _cache_monstro["dado"] and _cache_monstro["ate"] > agora:
+        return _cache_monstro["dado"]
     try:
         res = supabase.table("bestiary").select("name, type, cr, description").execute()
         if not res.data:
@@ -1934,26 +1941,21 @@ def bestiary_random_description():
         monstro = random.choice(res.data)
 
         prompt = f"""Você é um narrador de RPG de fantasia sombria.
-Escreva uma descrição atmosférica e ameaçadora de 3 a 4 frases sobre o monstro "{monstro['name']}" (tipo: {monstro['type']}, CR {monstro['cr']}).
-Foque na aparência, presença e o que os aventureiros sentem ao se deparar com ele.
-Não mencione stats ou números. Escreva em português.
-Responda APENAS com a descrição, sem título ou introdução."""
+        Escreva uma descrição atmosférica e ameaçadora de 3 a 4 frases sobre o monstro "{monstro['name']}" (tipo: {monstro['type']}, CR {monstro['cr']}).
+        Foque na aparência, presença e o que os aventureiros sentem ao se deparar com ele.
+        Não mencione stats ou números. Escreva em português.
+        Responda APENAS com a descrição, sem título ou introdução."""
 
         descricao = limpar_texto(gerar_texto_com_gemini(prompt))
 
-        return {
-            "success": True,
-            "data": {
-                "nome": monstro["name"],
-                "tipo": monstro["type"],
-                "cr": monstro["cr"],
-                "descricao": descricao
-            }
-        }
+        resposta = {"success": True, "data": {"descricao": descricao}}
+        _cache_monstro.update(ate=agora + CACHE_MONSTRO_SEGUNDOS, dado=resposta)
+        return resposta
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(500, f"Erro ao gerar descrição: {str(e)}")
+        print(f"ERRO DESCRICAO ALEATORIA: {e}")
+        raise HTTPException(500, "Erro ao gerar descrição")
 
 @app.post("/aplicar-asi", dependencies=[Depends(usuario_atual)])
 @limiter.limit("10/minute")
