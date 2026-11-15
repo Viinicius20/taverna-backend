@@ -30,6 +30,7 @@ from routers import wiki, fatos, diario, tv, mundo_vivo, mundo_fisico, extras, p
 from auth import confere_senha, criar_token, hash_senha, exigir_mestre, MESTRE, usuario_atual, usuario_opcional, dono_ou_mestre, dono_da_lista, checar_campanha
 from servicos import ocultar_cofre
 from core import _campanha_ctx, CAMPANHA_PADRAO, UUID_RE
+from imagens import TIPOS, LIMITE_BYTES, assinatura_ok
 
 
 VELOCIDADE_KM_DIA = 40
@@ -1831,30 +1832,56 @@ async def notificar_item(data: dict = Body(...)):
     except Exception as e:
         raise HTTPException(500, f"Erro ao notificar: {str(e)}")
 
+async def _ler_imagem(file: UploadFile):
+    ext = TIPOS.get(file.content_type)
+    if not ext:
+        raise HTTPException(400, "Envie uma imagem JPG, PNG ou WebP")
+    dados = await file.read(LIMITE_BYTES + 1)
+    if len(dados) > LIMITE_BYTES:
+        raise HTTPException(413, "Imagem maior que 3 MB")
+    if not assinatura_ok(dados, ext):
+        raise HTTPException(400, "O arquivo não é uma imagem válida")
+    return dados, ext
+
+
+def _url_publica(nome: str) -> str:
+    base = supabase.storage.from_("Avatars").get_public_url(nome).rstrip("?")
+    return f"{base}?v={int(time.time())}"
+
 
 @app.post("/characters/{character_id}/avatar", dependencies=[Depends(dono_ou_mestre)])
 async def upload_avatar(character_id: str, file: UploadFile = File(...)):
+    dados, ext = await _ler_imagem(file)
     try:
-        contents = await file.read()
-        filename = f"{character_id}.{file.filename.split('.')[-1]}"
-        print(f"AVATAR: filename={filename}, size={len(contents)}, type={file.content_type}")
-
+        nome = f"{character_id}.{ext}"
         supabase.storage.from_("Avatars").upload(
-            filename,
-            contents,
-            {"content-type": file.content_type, "upsert": "true"}
-        )
-
-        url = supabase.storage.from_("Avatars").get_public_url(filename)
-        print(f"AVATAR URL: {url}")
-
+            nome, dados, {"content-type": file.content_type, "upsert": "true"})
+        url = _url_publica(nome)
         supabase.table("characters").update({"avatar_url": url}).eq("id", character_id).execute()
-
         return {"success": True, "url": url}
     except Exception as e:
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(500, f"Erro ao fazer upload do avatar: {str(e)}")
+        print(f"ERRO AVATAR: {e}")
+        raise HTTPException(500, "Erro ao fazer upload do avatar")
+
+@app.post("/npcs/{npc_id}/avatar", dependencies=MESTRE)
+async def upload_avatar_npc(npc_id: str, file: UploadFile = File(...)):
+    dados, ext = await _ler_imagem(file)
+    try:
+        r = supabase.table("npcs").select("data").eq("id", npc_id).limit(1).execute().data
+        if not r:
+            raise HTTPException(404, "NPC não encontrado")
+        d = r[0].get("data") or {}
+        nome = f"npc-{npc_id}.{ext}"
+        supabase.storage.from_("Avatars").upload(
+            nome, dados, {"content-type": file.content_type, "upsert": "true"})
+        d["art_url"] = _url_publica(nome)
+        supabase.table("npcs").update({"data": d}).eq("id", npc_id).execute()
+        return {"success": True, "art_url": d["art_url"]}
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"ERRO AVATAR NPC: {e}")
+        raise HTTPException(500, "Erro ao enviar a foto do NPC")
 
 @app.get("/characters/{character_id}/historico", dependencies=[Depends(dono_ou_mestre)])
 async def historico_ficha(character_id: str, limite: int = 100):

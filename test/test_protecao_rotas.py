@@ -49,6 +49,7 @@ DO_MESTRE = [
     ("PUT", "/npc-notas/00000000-0000-0000-0000-000000000001/x"),
     ("POST", "/npc-notas/00000000-0000-0000-0000-000000000001/migrar"),
     ("DELETE", "/rolagens"),
+    ("POST", "/npcs/x/avatar")
 ]
 
 PUBLICAS = [
