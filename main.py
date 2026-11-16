@@ -1278,6 +1278,8 @@ class SecretMessageRequest(BaseModel):
     campaign_id: str
     character_id: str
     message: str
+    npc_nome: Optional[str] = None
+    npc_avatar_url: Optional[str] = None
 
 
 @app.post("/secret-messages", dependencies=MESTRE)
@@ -1289,9 +1291,13 @@ async def send_secret_message(req: SecretMessageRequest):
             "message": req.message,
             "lida": False
         }
+        if req.npc_nome:
+            data["npc_nome"] = req.npc_nome.strip()[:80]
+            url = (req.npc_avatar_url or "").strip()
+            if url.startswith("https://"):
+                data["npc_avatar_url"] = url[:500]
         response = supabase.table("secret_messages").insert(data).execute()
 
-        # Busca o user_id do personagem pra saber pra qual dispositivo mandar
         char_res = supabase.table("characters") \
             .select("user_id") \
             .eq("id", req.character_id) \
