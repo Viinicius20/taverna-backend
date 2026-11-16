@@ -50,7 +50,10 @@ DO_MESTRE = [
     ("POST", "/npc-notas/00000000-0000-0000-0000-000000000001/migrar"),
     ("DELETE", "/rolagens"),
     ("GET", "/mundo/eventos-proximos"),
-    ("POST", "/npcs/x/avatar")
+    ("POST", "/npcs/x/avatar"),
+    ("GET", "/tesouro"),
+    ("DELETE", "/tesouro/x"),
+    ("PATCH", "/tesouro/moedas")
 ]
 
 PUBLICAS = [
