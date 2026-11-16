@@ -51,9 +51,8 @@ DO_MESTRE = [
     ("DELETE", "/rolagens"),
     ("GET", "/mundo/eventos-proximos"),
     ("POST", "/npcs/x/avatar"),
-    ("GET", "/tesouro"),
     ("DELETE", "/tesouro/x"),
-    ("PATCH", "/tesouro/moedas")
+    ("PATCH", "/tesouro/moedas"),
 ]
 
 PUBLICAS = [
@@ -69,6 +68,7 @@ PUBLICAS = [
     ("GET", "/calendario/{campaign_id}"),
     ("GET", "/rolagens"),
     ("POST", "/rolagens"),
+    ("GET", "/tesouro"),
 ]
 
 DO_DONO = [
