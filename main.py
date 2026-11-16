@@ -2627,6 +2627,20 @@ def ficha_publica(request: Request, character_id: str):
 
     return {"success": True, "data": {"id": row["id"], "system": row.get("system"), "data": publico}}
 
+@app.get("/mundo/eventos-proximos", dependencies=MESTRE)
+async def eventos_proximos(limite: int = 5):
+    limite = max(1, min(limite, 20))
+    try:
+        eventos = (supabase.table("world_events")
+                   .select("id,name,description,deadline,data_alvo,progress,status")
+                   .eq("campaign_id", campanha_atual()).eq("status", "ativo")
+                   .execute().data or [])
+    except Exception as e:
+        print(f"ERRO EVENTOS PROXIMOS: {e}")
+        raise HTTPException(500, "Erro ao buscar eventos")
+    eventos.sort(key=lambda e: (e.get("data_alvo") is None, e.get("data_alvo") or 0))
+    return {"success": True, "data": eventos[:limite]}
+
 # ===================== RODAR =====================
 if __name__ == "__main__":
     import uvicorn
