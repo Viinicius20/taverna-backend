@@ -1962,16 +1962,19 @@ async def enviar_push_notification(user_id: str, titulo: str, mensagem: str):
 
 
 @app.get("/bestiary/random-description", dependencies=[Depends(usuario_atual)])
-def bestiary_random_description():
+@limiter.limit("12/minute")
+def bestiary_random_description(request: Request, novo: bool = False):
     agora = time.time()
-    if _cache_monstro["dado"] and _cache_monstro["ate"] > agora:
+    if not novo and _cache_monstro["dado"] and _cache_monstro["ate"] > agora:
         return _cache_monstro["dado"]
     try:
         res = supabase.table("bestiary").select("name, type, cr, description").execute()
         if not res.data:
             raise HTTPException(404, "Nenhum monstro encontrado")
 
-        monstro = random.choice(res.data)
+        anterior = ((_cache_monstro["dado"] or {}).get("data") or {}).get("nome")
+        candidatos = [m for m in res.data if m["name"] != anterior] or res.data
+        monstro = random.choice(candidatos)
 
         prompt = f"""Você é um narrador de RPG de fantasia sombria.
         Escreva uma descrição atmosférica e ameaçadora de 3 a 4 frases sobre o monstro "{monstro['name']}" (tipo: {monstro['type']}, CR {monstro['cr']}).
@@ -1981,7 +1984,12 @@ def bestiary_random_description():
 
         descricao = limpar_texto(gerar_texto_com_gemini(prompt))
 
-        resposta = {"success": True, "data": {"descricao": descricao}}
+        resposta = {"success": True, "data": {
+            "nome": monstro["name"],
+            "tipo": monstro["type"],
+            "cr": monstro["cr"],
+            "descricao": descricao,
+        }}
         _cache_monstro.update(ate=agora + CACHE_MONSTRO_SEGUNDOS, dado=resposta)
         return resposta
     except HTTPException:
