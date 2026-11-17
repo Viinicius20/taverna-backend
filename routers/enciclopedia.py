@@ -148,17 +148,6 @@ async def atlas(campaign_id: str, user: dict = Depends(usuario_atual)):
 async def atlas_mestre(campaign_id: str):
     return {"success": True, "data": _montar_atlas(campaign_id)}
 
-
-@router.post("/mapa/{campaign_id}", dependencies=MESTRE)
-async def upload_mapa(campaign_id: str, file: UploadFile = File(...)):
-    dados, ext = await _ler_imagem(file)      # AJUSTAR: veja a observação abaixo
-    nome = f"mapa-{campaign_id}.{ext}"
-    supabase.storage.from_("Avatars").upload(
-        nome, dados, {"content-type": file.content_type, "upsert": "true"})
-    url = f"{_url_publica(nome)}?v={int(time.time())}"
-    supabase.table("mapas").upsert({"campaign_id": campaign_id, "imagem_url": url}).execute()
-    return {"success": True, "url": url}
-
 class RegiaoIn(BaseModel):
     campaign_id: str
     nome: str
@@ -228,3 +217,14 @@ class MapaUrlIn(BaseModel):
 async def definir_mapa_url(campaign_id: str, req: MapaUrlIn):
     supabase.table("mapas").upsert({"campaign_id": campaign_id, "imagem_url": req.url}).execute()
     return {"success": True}
+
+
+@router.post("/mapa/{campaign_id}", dependencies=MESTRE)
+async def upload_mapa(campaign_id: str, file: UploadFile = File(...)):
+    dados, ext = await _ler_imagem(file)      # AJUSTAR: veja a observação abaixo
+    nome = f"mapa-{campaign_id}.{ext}"
+    supabase.storage.from_("Avatars").upload(
+        nome, dados, {"content-type": file.content_type, "upsert": "true"})
+    url = f"{_url_publica(nome)}?v={int(time.time())}"
+    supabase.table("mapas").upsert({"campaign_id": campaign_id, "imagem_url": url}).execute()
+    return {"success": True, "url": url}
