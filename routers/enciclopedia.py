@@ -2,6 +2,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, UploadFile, File
 from pydantic import BaseModel
 import time
+import json
 
 # AJUSTAR: importe de onde o router de locations já pega essas três coisas
 from deps import supabase, usuario_atual, MESTRE
@@ -117,22 +118,29 @@ def _ids_descobertos(campaign_id: str, user: dict) -> dict:
             por_tipo.setdefault(d["tipo"], set()).add(str(d["entidade_id"]))
     return por_tipo
 
-def _montar_atlas(campaign_id: str, descobertos=None):
-    """descobertos=None: mestre (todos os locais). set: jogador (só os revelados)."""
+def _montar_atlas(campaign_id: str, locais_ok=None, regioes_ok=None):
+    """None = mestre (tudo). set = jogador (só o que foi revelado)."""
     mapa = supabase.table("mapas").select("imagem_url").eq("campaign_id", campaign_id).execute().data
     locais = supabase.table("locations").select("*").eq("campaign_id", campaign_id).execute().data
-    pins = []
-    for r in locais:
-        if descobertos is not None and str(r["id"]) not in descobertos:
-            continue
-        pins.append({**_norm_local(r), "x": r.get("pin_x"), "y": r.get("pin_y")})
-    return {"mapa_url": mapa[0]["imagem_url"] if mapa else None, "pins": pins}
+    regioes = supabase.table("regioes").select("*").eq("campaign_id", campaign_id).execute().data
+
+    pins = [
+        {**_norm_local(r), "x": r.get("pin_x"), "y": r.get("pin_y"), "regiao_id": r.get("regiao_id")}
+        for r in locais
+        if locais_ok is None or str(r["id"]) in locais_ok
+    ]
+    regs = [
+        {"id": g["id"], "nome": g["nome"], "descricao": g.get("descricao") or "", "pontos": g.get("pontos") or []}
+        for g in regioes
+        if regioes_ok is None or str(g["id"]) in regioes_ok
+    ]
+    return {"mapa_url": mapa[0]["imagem_url"] if mapa else None, "pins": pins, "regioes": regs}
 
 
 @router.get("/atlas/{campaign_id}")
 async def atlas(campaign_id: str, user: dict = Depends(usuario_atual)):
-    revelados = _ids_descobertos(campaign_id, user).get("local", set())
-    return {"success": True, "data": _montar_atlas(campaign_id, revelados)}
+    rev = _ids_descobertos(campaign_id, user)
+    return {"success": True, "data": _montar_atlas(campaign_id, rev.get("local", set()), rev.get("regiao", set()))}
 
 
 @router.get("/atlas-mestre/{campaign_id}", dependencies=MESTRE)
@@ -149,3 +157,62 @@ async def upload_mapa(campaign_id: str, file: UploadFile = File(...)):
     url = f"{_url_publica(nome)}?v={int(time.time())}"
     supabase.table("mapas").upsert({"campaign_id": campaign_id, "imagem_url": url}).execute()
     return {"success": True, "url": url}
+
+class RegiaoIn(BaseModel):
+    campaign_id: str
+    nome: str
+    descricao: str = ""
+    pontos: list = []
+
+
+class RegiaoUpdate(BaseModel):
+    nome: Optional[str] = None
+    descricao: Optional[str] = None
+    pontos: Optional[list] = None
+
+
+@router.post("/regioes", dependencies=MESTRE)
+async def criar_regiao(req: RegiaoIn):
+    r = supabase.table("regioes").insert(req.dict()).execute()
+    return {"success": True, "data": r.data[0]}
+
+
+@router.patch("/regioes/{regiao_id}", dependencies=MESTRE)
+async def atualizar_regiao(regiao_id: str, req: RegiaoUpdate):
+    updates = {k: v for k, v in req.dict().items() if v is not None}
+    if updates:
+        supabase.table("regioes").update(updates).eq("id", regiao_id).execute()
+    return {"success": True}
+
+
+@router.delete("/regioes/{regiao_id}", dependencies=MESTRE)
+async def deletar_regiao(regiao_id: str):
+    supabase.table("locations").update({"regiao_id": None}).eq("regiao_id", regiao_id).execute()
+    supabase.table("regioes").delete().eq("id", regiao_id).execute()
+    return {"success": True}
+
+class GerarRegiaoIn(BaseModel):
+    contexto: str = ""
+
+@router.post("/regioes/{regiao_id}/gerar", dependencies=MESTRE)
+async def gerar_regiao(regiao_id: str, req: GerarRegiaoIn):
+    g = supabase.table("regioes").select("*").eq("id", regiao_id).execute().data[0]
+    prompt = (
+        f"Você ajuda um mestre de RPG a criar uma região de fantasia chamada '{g['nome']}'. "
+        f"Contexto do mestre: {req.contexto or 'nenhum'}. "
+        'Responda SOMENTE com JSON: {"descricao": "2 a 3 parágrafos sobre clima, cultura e perigos", '
+        '"cidades": [{"nome": "...", "descricao": "1 parágrafo"}]} com 2 a 4 cidades. '
+        "Em português do Brasil."
+    )
+    texto = await chamar_ia(prompt)        # AJUSTAR: a função que você já usa em /gerar-loot
+    dados = json.loads(texto.replace("```json", "").replace("```", "").strip())
+
+    supabase.table("regioes").update({"descricao": dados["descricao"]}).eq("id", regiao_id).execute()
+    novos = []
+    for c in dados.get("cidades", []):
+        r = supabase.table("locations").insert({
+            "campaign_id": g["campaign_id"], "name": c["nome"], "type": "cidade",
+            "description": c["descricao"], "regiao_id": regiao_id, "is_homebrew": True,
+        }).execute()
+        novos.append(r.data[0])
+    return {"success": True, "descricao": dados["descricao"], "cidades": novos}

@@ -36,6 +36,7 @@ class UpdateLocationRequest(BaseModel):
     name: str = None
     pin_x: Optional[float] = None
     pin_y: Optional[float] = None
+    regiao_id: Optional[str] = None
 
 
 class AjusteReputacao(BaseModel):
