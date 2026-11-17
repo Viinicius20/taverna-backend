@@ -130,7 +130,8 @@ def _montar_atlas(campaign_id: str, locais_ok=None, regioes_ok=None):
         if locais_ok is None or str(r["id"]) in locais_ok
     ]
     regs = [
-        {"id": g["id"], "nome": g["nome"], "descricao": g.get("descricao") or "", "pontos": g.get("pontos") or []}
+        {"id": g["id"], "nome": g["nome"], "descricao": g.get("descricao") or "",
+         "pontos": g.get("pontos") or [], "imagem_url": g.get("imagem_url")}
         for g in regioes
         if regioes_ok is None or str(g["id"]) in regioes_ok
     ]
@@ -163,12 +164,14 @@ class RegiaoIn(BaseModel):
     nome: str
     descricao: str = ""
     pontos: list = []
+    imagem_url: Optional[str] = None
 
 
 class RegiaoUpdate(BaseModel):
     nome: Optional[str] = None
     descricao: Optional[str] = None
     pontos: Optional[list] = None
+    imagem_url: Optional[str] = None
 
 
 @router.post("/regioes", dependencies=MESTRE)
@@ -216,3 +219,12 @@ async def gerar_regiao(regiao_id: str, req: GerarRegiaoIn):
         }).execute()
         novos.append(r.data[0])
     return {"success": True, "descricao": dados["descricao"], "cidades": novos}
+
+class MapaUrlIn(BaseModel):
+    url: str
+
+
+@router.put("/mapa/{campaign_id}/url", dependencies=MESTRE)
+async def definir_mapa_url(campaign_id: str, req: MapaUrlIn):
+    supabase.table("mapas").upsert({"campaign_id": campaign_id, "imagem_url": req.url}).execute()
+    return {"success": True}
