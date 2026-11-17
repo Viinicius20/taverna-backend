@@ -1869,6 +1869,21 @@ async def upload_avatar(character_id: str, file: UploadFile = File(...)):
         print(f"ERRO AVATAR: {e}")
         raise HTTPException(500, "Erro ao fazer upload do avatar")
 
+@app.post("/characters/{character_id}/retrato", dependencies=[Depends(dono_ou_mestre)])
+async def upload_retrato(character_id: str, file: UploadFile = File(...)):
+    dados, ext = await _ler_imagem(file)
+    try:
+        nome = f"{character_id}-retrato.{ext}"
+        supabase.storage.from_("Avatars").upload(
+            nome, dados, {"content-type": file.content_type, "upsert": "true"})
+        # o nome do arquivo é sempre o mesmo, então o ?v= evita a imagem antiga em cache
+        url = f"{_url_publica(nome)}?v={int(time.time())}"
+        supabase.table("characters").update({"retrato_url": url}).eq("id", character_id).execute()
+        return {"success": True, "url": url}
+    except Exception as e:
+        print(f"ERRO RETRATO: {e}")
+        raise HTTPException(500, "Erro ao fazer upload do retrato")
+
 @app.post("/npcs/{npc_id}/avatar", dependencies=MESTRE)
 async def upload_avatar_npc(npc_id: str, file: UploadFile = File(...)):
     dados, ext = await _ler_imagem(file)
