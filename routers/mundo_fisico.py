@@ -34,6 +34,8 @@ class LocationRequest(BaseModel):
 class UpdateLocationRequest(BaseModel):
     faction_id: str = None
     name: str = None
+    pin_x: Optional[float] = None
+    pin_y: Optional[float] = None
 
 
 class AjusteReputacao(BaseModel):
