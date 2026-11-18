@@ -236,6 +236,7 @@ class RegiaoIn(BaseModel):
     raio: Optional[float] = None
     semente: Optional[int] = None
     local_id: Optional[str] = None
+    ambiente: Optional[str] = None
 
 
 class RegiaoUpdate(BaseModel):
@@ -248,11 +249,12 @@ class RegiaoUpdate(BaseModel):
     raio: Optional[float] = None
     semente: Optional[int] = None
     local_id: Optional[str] = None
+    ambiente: Optional[str] = None
 
 
 @router.post("/regioes", dependencies=MESTRE)
 async def criar_regiao(req: RegiaoIn):
-    r = supabase.table("regioes").insert(req.dict()).execute()
+    r = supabase.table("regioes").insert(req.dict(exclude_none=True)).execute()
     return {"success": True, "data": r.data[0]}
 
 

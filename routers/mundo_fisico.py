@@ -18,12 +18,20 @@ class FactionRequest(BaseModel):
     system: str = "D&D 5e"
 
 
-class UpdateFactionRequest(BaseModel):
-    name: str = None
-    type: str = None
-    description: str = None
-    goals: str = None
-    reputation: str = None
+class UpdateLocationRequest(BaseModel):
+    faction_id: Optional[str] = None
+    name: Optional[str] = None
+    pin_x: Optional[float] = None
+    pin_y: Optional[float] = None
+    regiao_id: Optional[str] = None
+    description: Optional[str] = None
+    region_info: Optional[str] = None
+    commerce: Optional[str] = None
+    monsters: Optional[str] = None
+    quests: Optional[str] = None
+    boss: Optional[str] = None
+    language: Optional[str] = None
+    avg_level: Optional[str] = None
 
 
 class LocationRequest(BaseModel):
