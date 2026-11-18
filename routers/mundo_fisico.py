@@ -169,7 +169,13 @@ async def listar_locais(campaign_id: str):
 @router.patch("/locations/{location_id}", dependencies=MESTRE)
 async def atualizar_local(location_id: str, req: UpdateLocationRequest):
     updates = {k: v for k, v in req.dict().items() if v is not None}
-    supabase.table("locations").update(updates).eq("id", location_id).execute()
+    if not updates:
+        raise HTTPException(400, "Nada para atualizar: o modelo UpdateLocationRequest tem os campos pin_x, pin_y e regiao_id?")
+    try:
+        supabase.table("locations").update(updates).eq("id", location_id).execute()
+    except Exception as e:
+        print(f"ERRO PATCH LOCAL: {e}")
+        raise HTTPException(500, f"Erro ao atualizar o local: {e}")
     return {"success": True}
 
 
