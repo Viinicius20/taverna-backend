@@ -175,6 +175,7 @@ def _montar_atlas(campaign_id: str, locais_ok=None, regioes_ok=None):
                 "subtitulo": nl["subtitulo"] if nl else "",
                 "imagem_url": g.get("imagem_url") or None,
                 "local_id": g.get("local_id"),
+                "ambiente": g.get("ambiente") or "floresta",
             })
         regs.append(item)
 
