@@ -199,7 +199,11 @@ class MapaUrlIn(BaseModel):
 
 @router.put("/mapa/{campaign_id}/url", dependencies=MESTRE)
 async def definir_mapa_url(campaign_id: str, req: MapaUrlIn):
-    supabase.table("mapas").upsert({"campaign_id": campaign_id, "imagem_url": req.url}).execute()
+    try:
+        supabase.table("mapas").upsert({"campaign_id": campaign_id, "imagem_url": req.url}).execute()
+    except Exception as e:
+        print(f"ERRO MAPA URL: {e}")
+        raise HTTPException(500, f"Erro ao salvar o mapa: {e}")
     return {"success": True}
 
 
