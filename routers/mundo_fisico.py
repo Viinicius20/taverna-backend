@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from servicos import ajustar_reputacao
 from utils import MAXIMO
 import json
+from typing import Optional
 
 router = APIRouter()
 
@@ -32,8 +33,8 @@ class LocationRequest(BaseModel):
 
 
 class UpdateLocationRequest(BaseModel):
-    faction_id: str = None
-    name: str = None
+    faction_id: Optional[str] = None
+    name: Optional[str] = None
     pin_x: Optional[float] = None
     pin_y: Optional[float] = None
     regiao_id: Optional[str] = None
