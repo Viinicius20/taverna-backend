@@ -1,3 +1,4 @@
+import inspect
 import json
 import time
 from typing import Optional
@@ -5,10 +6,12 @@ from typing import Optional
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
-# AJUSTAR: o mesmo import que o router de locations usa
-from deps import supabase, usuario_atual, MESTRE
+from auth import MESTRE, usuario_atual
+from core import supabase
+from ia import gerar_texto_com_gemini
 
 router = APIRouter()
+
 
 # ---------- utilidades ----------
 
@@ -30,8 +33,12 @@ def _url_publica_mapa(nome: str) -> str:
 
 
 async def chamar_ia(prompt: str) -> str:
-    # AJUSTAR: troque o corpo pela função de IA que você já usa no gerador de loot / encontro
-    raise HTTPException(501, "Ligue chamar_ia à sua função de IA.")
+    # funciona se gerar_texto_com_gemini for comum ou async
+    resultado = gerar_texto_com_gemini(prompt)
+    if inspect.isawaitable(resultado):
+        resultado = await resultado
+    return resultado
+
 
 # ---------- descobertas (o mestre revela e esconde) ----------
 
@@ -135,17 +142,6 @@ async def enciclopedia(campaign_id: str, user: dict = Depends(usuario_atual)):
 
     return {"success": True, "data": saida}
 
-def _ids_descobertos(campaign_id: str, user: dict) -> dict:
-    meus = (supabase.table("characters").select("id")
-            .eq("campaign_id", campaign_id).eq("user_id", user["sub"]).execute().data)
-    meus_ids = {c["id"] for c in meus}
-    desc = (supabase.table("descobertas").select("tipo,entidade_id,personagem_id")
-            .eq("campaign_id", campaign_id).execute().data)
-    por_tipo = {}
-    for d in desc:
-        if d["personagem_id"] is None or d["personagem_id"] in meus_ids:
-            por_tipo.setdefault(d["tipo"], set()).add(str(d["entidade_id"]))
-    return por_tipo
 
 # ---------- atlas ----------
 
