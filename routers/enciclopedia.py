@@ -1,14 +1,37 @@
-import time
 import json
+import time
 from typing import Optional
-from fastapi import APIRouter, Depends, UploadFile, File
+
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
-# AJUSTAR: importe de onde o router de locations já pega essas três coisas
+# AJUSTAR: o mesmo import que o router de locations usa
 from deps import supabase, usuario_atual, MESTRE
 
 router = APIRouter()
 
+# ---------- utilidades ----------
+
+async def _ler_imagem_mapa(file: UploadFile):
+    dados = await file.read()
+    if len(dados) > 10 * 1024 * 1024:
+        raise HTTPException(413, "Imagem muito grande (máximo 10 MB).")
+    ext = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}.get((file.content_type or "").lower())
+    if not ext:
+        raise HTTPException(400, "Envie uma imagem JPG, PNG ou WEBP.")
+    return dados, ext
+
+
+def _url_publica_mapa(nome: str) -> str:
+    url = supabase.storage.from_("Avatars").get_public_url(nome)
+    if isinstance(url, dict):
+        url = url.get("publicURL") or url.get("publicUrl") or ""
+    return url.rstrip("?")
+
+
+async def chamar_ia(prompt: str) -> str:
+    # AJUSTAR: troque o corpo pela função de IA que você já usa no gerador de loot / encontro
+    raise HTTPException(501, "Ligue chamar_ia à sua função de IA.")
 
 # ---------- descobertas (o mestre revela e esconde) ----------
 
@@ -46,6 +69,20 @@ async def esconder(descoberta_id: str):
     return {"success": True}
 
 
+def _ids_descobertos(campaign_id: str, user: dict) -> dict:
+    meus = (supabase.table("characters").select("id")
+            .eq("campaign_id", campaign_id).eq("user_id", user["sub"]).execute().data)
+    meus_ids = {c["id"] for c in meus}
+    desc = (supabase.table("descobertas").select("tipo,entidade_id,personagem_id")
+            .eq("campaign_id", campaign_id).execute().data)
+    por_tipo = {}
+    for d in desc:
+        # vale se é do grupo todo (personagem_id nulo) ou de um personagem do próprio usuário
+        if d["personagem_id"] is None or d["personagem_id"] in meus_ids:
+            por_tipo.setdefault(d["tipo"], set()).add(str(d["entidade_id"]))
+    return por_tipo
+
+
 # ---------- enciclopédia (a tela dos jogadores) ----------
 
 def _norm_local(r):
@@ -59,7 +96,7 @@ def _norm_monstro(r):
     partes = [r.get("type"), f"CR {r['cr']}" if r.get("cr") else None]
     return {"id": r["id"], "nome": r.get("name"),
             "subtitulo": " · ".join(p for p in partes if p),
-            "descricao": "", "imagem": r.get("art_url")}            # AJUSTAR
+            "descricao": "", "imagem": r.get("art_url")}
 
 
 def _norm_npc(r):
@@ -88,15 +125,7 @@ TABELAS = {
 
 @router.get("/enciclopedia/{campaign_id}")
 async def enciclopedia(campaign_id: str, user: dict = Depends(usuario_atual)):
-    ids_por_tipo = _ids_descobertos(campaign_id, user)      # ← no lugar de tudo aquilo
-
-    saida = {}
-    for tipo, (tabela, norm, chave) in TABELAS.items():
-        ids = list(ids_por_tipo.get(tipo, []))
-        linhas = supabase.table(tabela).select("*").in_("id", ids).execute().data if ids else []
-        saida[chave] = sorted((norm(r) for r in linhas), key=lambda x: (x["nome"] or "").lower())
-
-    return {"success": True, "data": saida}
+    ids_por_tipo = _ids_descobertos(campaign_id, user)
 
     saida = {}
     for tipo, (tabela, norm, chave) in TABELAS.items():
@@ -117,6 +146,8 @@ def _ids_descobertos(campaign_id: str, user: dict) -> dict:
         if d["personagem_id"] is None or d["personagem_id"] in meus_ids:
             por_tipo.setdefault(d["tipo"], set()).add(str(d["entidade_id"]))
     return por_tipo
+
+# ---------- atlas ----------
 
 def _montar_atlas(campaign_id: str, locais_ok=None, regioes_ok=None):
     """None = mestre (tudo). set = jogador (só o que foi revelado)."""
@@ -141,7 +172,9 @@ def _montar_atlas(campaign_id: str, locais_ok=None, regioes_ok=None):
 @router.get("/atlas/{campaign_id}")
 async def atlas(campaign_id: str, user: dict = Depends(usuario_atual)):
     rev = _ids_descobertos(campaign_id, user)
-    return {"success": True, "data": _montar_atlas(campaign_id, rev.get("local", set()), rev.get("regiao", set()))}
+    return {"success": True,
+            "data": _montar_atlas(campaign_id, rev.get("local", set()), rev.get("regiao", set()))}
+
 
 @router.get("/atlas-mestre/{campaign_id}", dependencies=MESTRE)
 async def atlas_mestre(campaign_id: str):
@@ -150,11 +183,16 @@ async def atlas_mestre(campaign_id: str):
 
 @router.post("/mapa/{campaign_id}", dependencies=MESTRE)
 async def upload_mapa(campaign_id: str, file: UploadFile = File(...)):
-    dados, ext = await _ler_imagem(file)
+    dados, ext = await _ler_imagem_mapa(file)
     nome = f"mapa-{campaign_id}.{ext}"
-    supabase.storage.from_("Avatars").upload(
-        nome, dados, {"content-type": file.content_type, "upsert": "true"})
-    url = f"{_url_publica(nome)}?v={int(time.time())}"
+    try:
+        supabase.storage.from_("Avatars").upload(
+            nome, dados, {"content-type": file.content_type, "upsert": "true"})
+    except Exception as e:
+        print(f"ERRO MAPA: {e}")
+        raise HTTPException(500, "Erro ao enviar o mapa.")
+    # o nome do arquivo é sempre o mesmo, então o ?v= evita a imagem antiga em cache
+    url = f"{_url_publica_mapa(nome)}?v={int(time.time())}"
     supabase.table("mapas").upsert({"campaign_id": campaign_id, "imagem_url": url}).execute()
     return {"success": True, "url": url}
 
@@ -168,6 +206,8 @@ async def definir_mapa_url(campaign_id: str, req: MapaUrlIn):
     supabase.table("mapas").upsert({"campaign_id": campaign_id, "imagem_url": req.url}).execute()
     return {"success": True}
 
+
+# ---------- regiões ----------
 
 class RegiaoIn(BaseModel):
     campaign_id: str
@@ -203,3 +243,31 @@ async def deletar_regiao(regiao_id: str):
     supabase.table("locations").update({"regiao_id": None}).eq("regiao_id", regiao_id).execute()
     supabase.table("regioes").delete().eq("id", regiao_id).execute()
     return {"success": True}
+
+
+class GerarRegiaoIn(BaseModel):
+    contexto: str = ""
+
+
+@router.post("/regioes/{regiao_id}/gerar", dependencies=MESTRE)
+async def gerar_regiao(regiao_id: str, req: GerarRegiaoIn):
+    g = supabase.table("regioes").select("*").eq("id", regiao_id).execute().data[0]
+    prompt = (
+        f"Você ajuda um mestre de RPG a criar uma região de fantasia chamada '{g['nome']}'. "
+        f"Contexto do mestre: {req.contexto or 'nenhum'}. "
+        'Responda SOMENTE com JSON: {"descricao": "2 a 3 parágrafos sobre clima, cultura e perigos", '
+        '"cidades": [{"nome": "...", "descricao": "1 parágrafo"}]} com 2 a 4 cidades. '
+        "Em português do Brasil."
+    )
+    texto = await chamar_ia(prompt)
+    dados = json.loads(texto.replace("```json", "").replace("```", "").strip())
+
+    supabase.table("regioes").update({"descricao": dados["descricao"]}).eq("id", regiao_id).execute()
+    novos = []
+    for c in dados.get("cidades", []):
+        r = supabase.table("locations").insert({
+            "campaign_id": g["campaign_id"], "name": c["nome"], "type": "cidade",
+            "description": c["descricao"], "regiao_id": regiao_id, "is_homebrew": True,
+        }).execute()
+        novos.append(r.data[0])
+    return {"success": True, "descricao": dados["descricao"], "cidades": novos}
