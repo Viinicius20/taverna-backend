@@ -147,22 +147,38 @@ async def enciclopedia(campaign_id: str, user: dict = Depends(usuario_atual)):
 
 def _montar_atlas(campaign_id: str, locais_ok=None, regioes_ok=None):
     """None = mestre (tudo). set = jogador (só o que foi revelado)."""
-    mapa = supabase.table("mapas").select("imagem_url").eq("campaign_id", campaign_id).execute().data
     locais = supabase.table("locations").select("*").eq("campaign_id", campaign_id).execute().data
     regioes = supabase.table("regioes").select("*").eq("campaign_id", campaign_id).execute().data
+    por_id = {str(r["id"]): r for r in locais}
 
     pins = [
         {**_norm_local(r), "x": r.get("pin_x"), "y": r.get("pin_y"), "regiao_id": r.get("regiao_id")}
         for r in locais
         if locais_ok is None or str(r["id"]) in locais_ok
     ]
-    regs = [
-        {"id": g["id"], "nome": g["nome"], "descricao": g.get("descricao") or "",
-         "pontos": g.get("pontos") or [], "imagem_url": g.get("imagem_url")}
-        for g in regioes
-        if regioes_ok is None or str(g["id"]) in regioes_ok
-    ]
-    return {"mapa_url": mapa[0]["imagem_url"] if mapa else None, "pins": pins, "regioes": regs}
+
+    regs = []
+    for g in regioes:
+        if g.get("cx") is None:
+            continue
+        descoberta = regioes_ok is None or str(g["id"]) in regioes_ok
+        # a forma vai para todos (a silhueta); o resto só se a terra foi descoberta
+        item = {"id": g["id"], "cx": g["cx"], "cy": g["cy"],
+                "raio": g.get("raio") or 8, "semente": g.get("semente") or 1,
+                "descoberta": descoberta}
+        if descoberta:
+            loc = por_id.get(str(g["local_id"])) if g.get("local_id") else None
+            nl = _norm_local(loc) if loc else None
+            item.update({
+                "nome": g["nome"],
+                "descricao": (nl["descricao"] if nl else None) or g.get("descricao") or "",
+                "subtitulo": nl["subtitulo"] if nl else "",
+                "imagem_url": g.get("imagem_url") or None,
+                "local_id": g.get("local_id"),
+            })
+        regs.append(item)
+
+    return {"pins": pins, "regioes": regs}
 
 
 @router.get("/atlas/{campaign_id}")
@@ -215,6 +231,11 @@ class RegiaoIn(BaseModel):
     descricao: str = ""
     pontos: list = []
     imagem_url: Optional[str] = None
+    cx: Optional[float] = None
+    cy: Optional[float] = None
+    raio: Optional[float] = None
+    semente: Optional[int] = None
+    local_id: Optional[str] = None
 
 
 class RegiaoUpdate(BaseModel):
@@ -222,6 +243,11 @@ class RegiaoUpdate(BaseModel):
     descricao: Optional[str] = None
     pontos: Optional[list] = None
     imagem_url: Optional[str] = None
+    cx: Optional[float] = None
+    cy: Optional[float] = None
+    raio: Optional[float] = None
+    semente: Optional[int] = None
+    local_id: Optional[str] = None
 
 
 @router.post("/regioes", dependencies=MESTRE)
