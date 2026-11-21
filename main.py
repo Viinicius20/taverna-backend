@@ -26,7 +26,7 @@ from datetime import datetime
 from utils import limpar_texto
 from utils import MAXIMO
 from core import supabase, campanha_atual, limiter
-from routers import wiki, fatos, diario, tv, mundo_vivo, mundo_fisico, extras, publica, cofre, calendario, prazos, relacoes, npc_notas, sessao_zero, health, rolagens, tesouro, enciclopedia
+from routers import wiki, fatos, diario, tv, mundo_vivo, mundo_fisico, extras, publica, cofre, calendario, prazos, relacoes, npc_notas, sessao_zero, health, rolagens, tesouro, enciclopedia, lendas
 from auth import confere_senha, criar_token, hash_senha, exigir_mestre, MESTRE, usuario_atual, usuario_opcional, dono_ou_mestre, dono_da_lista, checar_campanha
 from servicos import ocultar_cofre
 from core import _campanha_ctx, CAMPANHA_PADRAO, UUID_RE
@@ -177,6 +177,7 @@ app.include_router(mundo_fisico.router)
 app.include_router(extras.router)
 app.include_router(rolagens.router)
 app.include_router(enciclopedia.router)
+app.include_router(lendas.router)
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 MODELOS_GEMINI = ["gemini-2.5-flash", "gemini-3.6-flash"]
@@ -937,32 +938,59 @@ def gerar_boato(request: Request):
     flags_ativas = supabase.table("campaign_flags").select("key, description") \
         .eq("campaign_id", campanha_atual()).eq("value", True).execute().data
 
-    # 1) lista de assuntos possíveis tirados do mundo
+    try:
+        lendas = supabase.table("lendas").select("*") \
+            .eq("campaign_id", campanha_atual()).eq("ativa", True).execute().data or []
+    except Exception:
+        lendas = []   # se a tabela ainda não existir, o boato sai como antes
+
     candidatos = (
         [f"o evento em andamento \"{e['name']}\" ({e['progress']}%): {e.get('description') or ''}" for e in eventos_ativos]
         + [f"as consequências do evento \"{e['name']}\": {e.get('consequences') or ''}" for e in eventos_concluidos]
         + [f"este fato do mundo: {f.get('description') or f['key']}" for f in flags_ativas]
     )
 
-    falso = random.random() < 0.1
-    tipo = "COMPLETAMENTE FALSO e absurdo" if falso else "VERDADEIRO sobre o mundo"
-
-    # 70% das vezes (e se o boato for verdadeiro) usa um assunto do mundo; senão, sorteia tema livre
-    assunto = random.choice(candidatos) if candidatos and not falso and random.random() < 0.7 else None
-
     tom, narrador = random.choice(TONS), random.choice(NARRADORES)
-    if assunto:
-        direcao = f"O boato deve ser sobre {assunto}\nTom: {tom}. Quem conta: {narrador}."
-    else:
-        direcao = f"Tema: {random.choice(TEMAS)}. Tom: {tom}. Quem conta: {narrador}."
 
-    # 2) memória: os boatos anteriores já ficam salvos em session_events
+    # 40% das vezes, havendo lendas ativas, o boato nasce de uma lenda
+    lenda = random.choice(lendas) if lendas and random.random() < 0.4 else None
+
+    if lenda:
+        falso = False
+        tipo = "NEM TOTALMENTE VERDADEIRO NEM TOTALMENTE FALSO: parte de um fundo real, mas distorcido, como fofoca de verdade"
+        n = lenda.get("distorcao") or 0
+        atual = (lenda.get("ultimo_boato") or "").strip()
+        direcao = (
+            f"O boato é sobre a lenda local \"{lenda['titulo']}\".\n"
+            f"O que realmente aconteceu (SÓ PARA VOCÊ SABER; nunca conte isso diretamente nem confirme): "
+            f"{(lenda.get('verdade') or 'não informado')}\n"
+            f"O que o povo costuma dizer: {(lenda.get('versao_popular') or 'não informado')}\n"
+        )
+        if atual:
+            direcao += (
+                f"A versão que anda circulando agora é: \"{atual}\" (já passou de boca em boca {n} vezes).\n"
+                "Conte uma NOVA versão, vinda de outra pessoa que ouviu essa e a distorceu: exagere um detalhe, "
+                "troque um número ou um nome, esqueça uma parte ou misture com outra história. "
+                "Quanto mais vezes passou de boca em boca, mais longe da verdade ela fica, sem nunca ser totalmente inventada.\n"
+            )
+        else:
+            direcao += "Conte a primeira versão que corre pela taverna: com um fundo de verdade, mas já meio torta.\n"
+        direcao += f"Tom: {tom}. Quem conta: {narrador}."
+    else:
+        falso = random.random() < 0.1
+        tipo = "COMPLETAMENTE FALSO e absurdo" if falso else "VERDADEIRO sobre o mundo"
+        assunto = random.choice(candidatos) if candidatos and not falso and random.random() < 0.7 else None
+        if assunto:
+            direcao = f"O boato deve ser sobre {assunto}\nTom: {tom}. Quem conta: {narrador}."
+        else:
+            direcao = f"Tema: {random.choice(TEMAS)}. Tom: {tom}. Quem conta: {narrador}."
+
     try:
         recentes = supabase.table("session_events").select("descricao") \
             .eq("campaign_id", campanha_atual()).eq("tipo", "rumor") \
             .order("created_at", desc=True).limit(8).execute().data
     except Exception:
-        recentes = []   # se a consulta falhar, o boato sai mesmo assim
+        recentes = []
     recentes_txt = "\n".join(f"- {r['descricao']}" for r in recentes) or "(nenhum ainda)"
 
     prompt = f"""Você é um frequentador de taverna em um mundo de fantasia medieval. Gere UM boato curto que estaria circulando na taverna. Este boato é {tipo}.
@@ -981,6 +1009,19 @@ Retorne APENAS um JSON: {{"boato": "frase curta", "fonte": "quem espalha"}}"""
         boato_data["fonte"] = limpar_texto(boato_data.get("fonte")) or narrador
         boato_data["falso"] = falso   # decidido no código, não pelo modelo
 
+        if lenda:
+            novo_n = (lenda.get("distorcao") or 0) + 1
+            reiniciar = novo_n >= 6        # depois de 6 passagens a história recomeça
+            try:
+                supabase.table("lendas").update({
+                    "ultimo_boato": "" if reiniciar else boato_data["boato"],
+                    "distorcao": 0 if reiniciar else novo_n,
+                }).eq("id", lenda["id"]).execute()
+            except Exception as e:
+                print(f"[AVISO] Falha ao atualizar a lenda: {e}")
+            boato_data["distorcido"] = True
+            boato_data["distorcao"] = novo_n
+
         try:
             supabase.table("session_events").insert({
                 "campaign_id": campanha_atual(),
@@ -994,14 +1035,6 @@ Retorne APENAS um JSON: {{"boato": "frase curta", "fonte": "quem espalha"}}"""
     except Exception as e:
         print(f"ERRO BOATO: {e}")
         raise HTTPException(500, f"Erro ao gerar boato: {str(e)}")
-
-@app.patch("/magic-items/{item_id}/revelar", dependencies=MESTRE)
-async def revelar_item(item_id: str):
-    try:
-        supabase.table("magic_items").update({"identificado": True}).eq("id", item_id).execute()
-        return {"success": True}
-    except Exception as e:
-        raise HTTPException(500, f"Erro ao revelar item: {str(e)}")
 
 @app.post("/sessions", dependencies=MESTRE)
 async def create_session(req: SessionRequest):
