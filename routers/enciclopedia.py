@@ -145,14 +145,38 @@ async def enciclopedia(campaign_id: str, user: dict = Depends(usuario_atual)):
 
 # ---------- atlas ----------
 
-def _montar_atlas(campaign_id: str, locais_ok=None, regioes_ok=None):
-    """None = mestre (tudo). set = jogador (só o que foi revelado)."""
+def _npcs_por_local(campaign_id: str, npcs_ok=None) -> dict:
+    linhas = (supabase.table("npc_notas").select("npc_id, notas")
+              .eq("campaign_id", campaign_id).execute().data or [])
+    ids_por_local = {}
+    for l in linhas:
+        loc = ((l.get("notas") or {}).get("location") or "").strip().lower()
+        if not loc:
+            continue
+        if npcs_ok is not None and str(l["npc_id"]) not in npcs_ok:
+            continue
+        ids_por_local.setdefault(loc, []).append(l["npc_id"])
+
+    todos = list({i for ids in ids_por_local.values() for i in ids})
+    nomes = {}
+    if todos:
+        for c in supabase.table("characters").select("id, name").in_("id", todos).execute().data or []:
+            nomes[str(c["id"])] = c["name"]
+
+    return {
+        loc: [{"id": i, "nome": nomes[str(i)]} for i in ids if str(i) in nomes]
+        for loc, ids in ids_por_local.items()
+    }
+
+def _montar_atlas(campaign_id: str, locais_ok=None, regioes_ok=None, npcs_ok=None):
     locais = supabase.table("locations").select("*").eq("campaign_id", campaign_id).execute().data
     regioes = supabase.table("regioes").select("*").eq("campaign_id", campaign_id).execute().data
+    por_local = _npcs_por_local(campaign_id, npcs_ok)
     por_id = {str(r["id"]): r for r in locais}
 
     pins = [
-        {**_norm_local(r), "x": r.get("pin_x"), "y": r.get("pin_y"), "regiao_id": r.get("regiao_id")}
+        {**_norm_local(r), "x": r.get("pin_x"), "y": r.get("pin_y"), "regiao_id": r.get("regiao_id"),
+         "npcs": por_local.get((r.get("name") or "").strip().lower(), [])}
         for r in locais
         if locais_ok is None or str(r["id"]) in locais_ok
     ]
@@ -186,7 +210,8 @@ def _montar_atlas(campaign_id: str, locais_ok=None, regioes_ok=None):
 async def atlas(campaign_id: str, user: dict = Depends(usuario_atual)):
     rev = _ids_descobertos(campaign_id, user)
     return {"success": True,
-            "data": _montar_atlas(campaign_id, rev.get("local", set()), rev.get("regiao", set()))}
+            "data": _montar_atlas(campaign_id, rev.get("local", set()),
+                                  rev.get("regiao", set()), rev.get("npc", set()))}
 
 
 @router.get("/atlas-mestre/{campaign_id}", dependencies=MESTRE)
