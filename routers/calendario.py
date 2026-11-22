@@ -7,6 +7,7 @@ from servicos import calendario_atual, gravar_calendario, avancar_calendario
 from utils import para_dia_total
 from datetime import datetime
 from utils import para_dia_total, MESES_PADRAO
+from routers.lendas import distorcer_com_o_tem
 
 
 def campanha_valida(campaign_id: str):
@@ -44,6 +45,10 @@ def ver_calendario(campaign_id: str):
 @router.post("/calendario/{campaign_id}/avancar", dependencies=[Depends(exigir_mestre)])
 def avancar(campaign_id: str, body: AvancarReq):
     cal = avancar_calendario(campaign_id, body.dias, body.motivo)
+    try:
+        distorcer_com_o_tempo(campaign_id, body.dias)
+    except Exception as e:
+        print(f"[AVISO] As lendas não acompanharam o tempo: {e}")
     return {"success": True, "data": {"data": cal["data"], "texto": cal["texto"]}}
 
 

@@ -107,8 +107,9 @@ def _norm_monstro(r):
 
 
 def _norm_npc(r):
+    d = r.get("data") or {}
     return {"id": r["id"], "nome": r.get("name"),
-            "subtitulo": (r.get("data") or {}).get("race", ""),
+            "subtitulo": d.get("occupation") or d.get("race") or "",
             "descricao": "", "imagem": r.get("avatar_url")}
 
 
@@ -125,7 +126,7 @@ def _norm_item(r):
 TABELAS = {
     "local":   ("locations",   _norm_local,   "locais"),
     "monstro": ("bestiary",    _norm_monstro, "monstros"),
-    "npc":     ("characters",  _norm_npc,     "npcs"),
+    "npc":     ("npcs", _norm_npc, "npcs"),
     "item":    ("magic_items", _norm_item,    "itens"),
 }
 
@@ -160,7 +161,7 @@ def _npcs_por_local(campaign_id: str, npcs_ok=None) -> dict:
     todos = list({i for ids in ids_por_local.values() for i in ids})
     nomes = {}
     if todos:
-        for c in supabase.table("characters").select("id, name").in_("id", todos).execute().data or []:
+        for c in supabase.table("npcs").select("id, name").in_("id", todos).execute().data or []:
             nomes[str(c["id"])] = c["name"]
 
     return {

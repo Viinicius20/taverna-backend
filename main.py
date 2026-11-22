@@ -26,11 +26,12 @@ from datetime import datetime
 from utils import limpar_texto
 from utils import MAXIMO
 from core import supabase, campanha_atual, limiter
-from routers import wiki, fatos, diario, tv, mundo_vivo, mundo_fisico, extras, publica, cofre, calendario, prazos, relacoes, npc_notas, sessao_zero, health, rolagens, tesouro, enciclopedia, lendas
+from routers import wiki, fatos, diario, tv, mundo_vivo, mundo_fisico, extras, publica, cofre, calendario, prazos, relacoes, npc_notas, sessao_zero, health, rolagens, tesouro, enciclopedia, lendas, faccao_notas
 from auth import confere_senha, criar_token, hash_senha, exigir_mestre, MESTRE, usuario_atual, usuario_opcional, dono_ou_mestre, dono_da_lista, checar_campanha
 from servicos import ocultar_cofre
 from core import _campanha_ctx, CAMPANHA_PADRAO, UUID_RE
 from imagens import TIPOS, LIMITE_BYTES, assinatura_ok
+from boatos_reputacao import pressoes_de_reputacao
 
 
 VELOCIDADE_KM_DIA = 40
@@ -178,6 +179,7 @@ app.include_router(extras.router)
 app.include_router(rolagens.router)
 app.include_router(enciclopedia.router)
 app.include_router(lendas.router)
+app.include_router(faccao_notas.router)
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 MODELOS_GEMINI = ["gemini-2.5-flash", "gemini-3.6-flash"]
@@ -952,8 +954,12 @@ def gerar_boato(request: Request):
 
     tom, narrador = random.choice(TONS), random.choice(NARRADORES)
 
+    tom, narrador = random.choice(TONS), random.choice(NARRADORES)
+
     # 40% das vezes, havendo lendas ativas, o boato nasce de uma lenda
     lenda = random.choice(lendas) if lendas and random.random() < 0.4 else None
+    pressoes = [] if lenda else pressoes_de_reputacao(campanha_atual())
+    pressao = random.choice(pressoes) if pressoes and random.random() < 0.35 else None
 
     if lenda:
         falso = False
@@ -976,6 +982,23 @@ def gerar_boato(request: Request):
         else:
             direcao += "Conte a primeira versão que corre pela taverna: com um fundo de verdade, mas já meio torta.\n"
         direcao += f"Tom: {tom}. Quem conta: {narrador}."
+
+    elif pressao:
+        falso = False
+        tipo = "NEM TOTALMENTE VERDADEIRO NEM TOTALMENTE FALSO: parte de um fundo real, mas distorcido, como fofoca de verdade"
+        negativo = pressao["tom"] == "negativo"
+        direcao = (
+                f"O boato é sobre como o grupo de aventureiros anda sendo visto em {pressao['local']}.\n"
+                f"Cerca de {pressao['qtd']} pessoas de lá "
+                + ("guardam rancor do grupo" if negativo else "são gratas ao grupo") + ".\n"
+        )
+        if pressao["motivos"]:
+            direcao += ("Coisas que o grupo fez e que o povo comenta (conte distorcendo, exagerando ou misturando, "
+                        "nunca como um relatório): " + "; ".join(pressao["motivos"]) + "\n")
+        direcao += ("O boato deve ser " + (
+            "maldoso, desconfiado ou acusador" if negativo else "elogioso, talvez exagerado")
+                    + f".\nTom: {tom}. Quem conta: {narrador}.")
+
     else:
         falso = random.random() < 0.1
         tipo = "COMPLETAMENTE FALSO e absurdo" if falso else "VERDADEIRO sobre o mundo"
@@ -994,12 +1017,12 @@ def gerar_boato(request: Request):
     recentes_txt = "\n".join(f"- {r['descricao']}" for r in recentes) or "(nenhum ainda)"
 
     prompt = f"""Você é um frequentador de taverna em um mundo de fantasia medieval. Gere UM boato curto que estaria circulando na taverna. Este boato é {tipo}.
-{direcao}
-
-Não repita nem se aproxime destes boatos recentes. Mude o assunto, as palavras e a ideia:
-{recentes_txt}
-
-Retorne APENAS um JSON: {{"boato": "frase curta", "fonte": "quem espalha"}}"""
+    {direcao}
+    
+    Não repita nem se aproxime destes boatos recentes. Mude o assunto, as palavras e a ideia:
+    {recentes_txt}
+    
+    Retorne APENAS um JSON: {{"boato": "frase curta", "fonte": "quem espalha"}}"""
 
     try:
         raw = gerar_texto_com_gemini(prompt)
