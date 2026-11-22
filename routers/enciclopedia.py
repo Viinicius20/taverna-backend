@@ -250,6 +250,12 @@ def _montar_atlas(campaign_id: str, locais_ok=None, regioes_ok=None, npcs_ok=Non
                 "subtitulo": nl["subtitulo"] if nl else "",
                 "imagem_url": g.get("imagem_url") or None,
                 "local_id": g.get("local_id"),
+                "ambiente": g.get("ambiente") or "floresta",
+                "info": {
+                    "regiao": loc.get("region_info") if loc else None,
+                    "comercio": loc.get("commerce") if loc else None,
+                    "idioma": loc.get("language") if loc else None,
+                },
             })
         regs.append(item)
 
