@@ -929,10 +929,7 @@ async def get_sessions(campaign_id: str):
     except Exception as e:
         raise HTTPException(500, f"Erro ao buscar sessões: {str(e)}")
 
-
-@app.get("/boato")
-@limiter.limit("10/minute")
-def gerar_boato(request: Request):
+def produzir_boato(nivel: Optional[str] = None) -> dict:
     eventos_ativos = supabase.table("world_events").select("name, description, progress") \
         .eq("campaign_id", campanha_atual()).eq("status", "ativo").execute().data
     eventos_concluidos = supabase.table("world_events").select("name, consequences") \
@@ -942,24 +939,32 @@ def gerar_boato(request: Request):
 
     try:
         lendas = supabase.table("lendas").select("*") \
-            .eq("campaign_id", campanha_atual()).eq("ativa", True).execute().data or []
+                     .eq("campaign_id", campanha_atual()).eq("ativa", True).execute().data or []
     except Exception:
-        lendas = []   # se a tabela ainda não existir, o boato sai como antes
+        lendas = []  # se a tabela ainda não existir, o boato sai como antes
 
     candidatos = (
-        [f"o evento em andamento \"{e['name']}\" ({e['progress']}%): {e.get('description') or ''}" for e in eventos_ativos]
-        + [f"as consequências do evento \"{e['name']}\": {e.get('consequences') or ''}" for e in eventos_concluidos]
-        + [f"este fato do mundo: {f.get('description') or f['key']}" for f in flags_ativas]
+            [f"o evento em andamento \"{e['name']}\" ({e['progress']}%): {e.get('description') or ''}" for e in
+             eventos_ativos]
+            + [f"as consequências do evento \"{e['name']}\": {e.get('consequences') or ''}" for e in eventos_concluidos]
+            + [f"este fato do mundo: {f.get('description') or f['key']}" for f in flags_ativas]
     )
 
     tom, narrador = random.choice(TONS), random.choice(NARRADORES)
 
-    tom, narrador = random.choice(TONS), random.choice(NARRADORES)
 
     # 40% das vezes, havendo lendas ativas, o boato nasce de uma lenda
     lenda = random.choice(lendas) if lendas and random.random() < 0.4 else None
     pressoes = [] if lenda else pressoes_de_reputacao(campanha_atual())
     pressao = random.choice(pressoes) if pressoes and random.random() < 0.35 else None
+
+    fama = None
+    if not lenda and not pressao:
+        fatos_fama = fama_dos_personagens(campanha_atual())
+        fama = random.choice(fatos_fama) if fatos_fama and random.random() < 0.3 else None
+
+    if nivel == "falso":          # falha na rolagem: só chega uma história sem pé nem cabeça
+        lenda = pressao = fama = None
 
     if lenda:
         falso = False
@@ -1010,13 +1015,18 @@ def gerar_boato(request: Request):
         )
 
     else:
-        falso = random.random() < 0.1
+        falso = True if nivel == "falso" else (False if nivel else random.random() < 0.1)
         tipo = "COMPLETAMENTE FALSO e absurdo" if falso else "VERDADEIRO sobre o mundo"
         assunto = random.choice(candidatos) if candidatos and not falso and random.random() < 0.7 else None
         if assunto:
             direcao = f"O boato deve ser sobre {assunto}\nTom: {tom}. Quem conta: {narrador}."
         else:
             direcao = f"Tema: {random.choice(TEMAS)}. Tom: {tom}. Quem conta: {narrador}."
+
+        if nivel == "preciso":
+            direcao += "\nEste boato veio de alguém muito bem informado: seja fiel ao que realmente aconteceu e inclua um detalhe concreto e útil."
+        elif nivel == "turvo":
+            direcao += "\nEste boato veio de segunda mão: mantenha um fundo de verdade, mas com distorções claras."
 
     try:
         recentes = supabase.table("session_events").select("descricao") \
@@ -1027,12 +1037,12 @@ def gerar_boato(request: Request):
     recentes_txt = "\n".join(f"- {r['descricao']}" for r in recentes) or "(nenhum ainda)"
 
     prompt = f"""Você é um frequentador de taverna em um mundo de fantasia medieval. Gere UM boato curto que estaria circulando na taverna. Este boato é {tipo}.
-    {direcao}
-    
-    Não repita nem se aproxime destes boatos recentes. Mude o assunto, as palavras e a ideia:
-    {recentes_txt}
-    
-    Retorne APENAS um JSON: {{"boato": "frase curta", "fonte": "quem espalha"}}"""
+        {direcao}
+
+        Não repita nem se aproxime destes boatos recentes. Mude o assunto, as palavras e a ideia:
+        {recentes_txt}
+
+        Retorne APENAS um JSON: {{"boato": "frase curta", "fonte": "quem espalha"}}"""
 
     try:
         raw = gerar_texto_com_gemini(prompt)
@@ -1040,11 +1050,11 @@ def gerar_boato(request: Request):
         boato_data = json.loads(raw)
         boato_data["boato"] = limpar_texto(boato_data.get("boato"))
         boato_data["fonte"] = limpar_texto(boato_data.get("fonte")) or narrador
-        boato_data["falso"] = falso   # decidido no código, não pelo modelo
+        boato_data["falso"] = falso  # decidido no código, não pelo modelo
 
-        if lenda:
+        if lenda and nivel != "preciso":
             novo_n = (lenda.get("distorcao") or 0) + 1
-            reiniciar = novo_n >= 6        # depois de 6 passagens a história recomeça
+            reiniciar = novo_n >= 6  # depois de 6 passagens a história recomeça
             try:
                 supabase.table("lendas").update({
                     "ultimo_boato": "" if reiniciar else boato_data["boato"],
@@ -1068,6 +1078,49 @@ def gerar_boato(request: Request):
     except Exception as e:
         print(f"ERRO BOATO: {e}")
         raise HTTPException(500, f"Erro ao gerar boato: {str(e)}")
+
+@app.get("/boato")
+@limiter.limit("10/minute")
+def gerar_boato(request: Request):
+    return produzir_boato()
+
+PERICIAS_BOATO = {"investigation": "int", "persuasion": "cha", "insight": "wis"}   # perícia -> atributo
+
+
+@app.post("/boato/ouvir/{character_id}", dependencies=[Depends(dono_ou_mestre)])
+@limiter.limit("6/minute")
+def ouvir_boato(request: Request, character_id: str, pericia: str = "investigation",
+                user: dict = Depends(usuario_atual)):
+    if pericia not in PERICIAS_BOATO:
+        raise HTTPException(400, "Perícia inválida")
+    linha = supabase.table("characters").select("data").eq("id", character_id).limit(1).execute().data
+    if not linha:
+        raise HTTPException(404, "Personagem não encontrado")
+
+    d = linha[0].get("data") or {}
+    bonus = (d.get("skills") or {}).get(pericia)
+    if bonus is None:   # sem proficiência listada: vale só o modificador do atributo
+        atributo = (d.get("attributes") or {}).get(PERICIAS_BOATO[pericia], 10)
+        bonus = (int(atributo) - 10) // 2
+    bonus = int(bonus)
+
+    d20 = random.randint(1, 20)
+    total = d20 + bonus
+    if d20 == 1 or total < 8:
+        nivel = "falso"
+    elif d20 == 20 or total >= 15:
+        nivel = "preciso"
+    else:
+        nivel = "turvo"
+
+    resultado = produzir_boato(nivel)
+    resultado["data"]["rolagem"] = {"pericia": pericia, "d20": d20, "bonus": bonus, "total": total}
+    if user.get("role") == "mestre":
+        resultado["data"]["nivel"] = nivel
+    else:   # o jogador não vê se o boato é falso nem a categoria
+        for chave in ("falso", "distorcido", "distorcao"):
+            resultado["data"].pop(chave, None)
+    return resultado
 
 @app.post("/sessions", dependencies=MESTRE)
 async def create_session(req: SessionRequest):
