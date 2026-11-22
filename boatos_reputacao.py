@@ -51,3 +51,20 @@ def _motivos(ids: list, tom: str) -> list:
         if len(motivos) >= MAX_MOTIVOS:
             break
     return motivos
+
+def fama_dos_personagens(campaign_id: str) -> list:
+    """Feitos registrados nos momentos das fichas, para virarem fofoca exagerada."""
+    try:
+        chars = supabase.table("characters").select("name, data") \
+            .eq("campaign_id", campaign_id).execute().data or []
+    except Exception:
+        return []
+    fatos = []
+    for c in chars:
+        d = c.get("data") or {}
+        nome = d.get("name") or c.get("name")
+        for m in (d.get("momentos") or [])[-5:]:      # os 5 mais recentes de cada personagem
+            texto = (m.get("texto") or "").strip() if isinstance(m, dict) else ""
+            if texto:
+                fatos.append({"nome": nome, "texto": texto[:200]})
+    return fatos

@@ -31,7 +31,7 @@ from auth import confere_senha, criar_token, hash_senha, exigir_mestre, MESTRE, 
 from servicos import ocultar_cofre
 from core import _campanha_ctx, CAMPANHA_PADRAO, UUID_RE
 from imagens import TIPOS, LIMITE_BYTES, assinatura_ok
-from boatos_reputacao import pressoes_de_reputacao
+from boatos_reputacao import pressoes_de_reputacao, fama_dos_personagens
 
 
 VELOCIDADE_KM_DIA = 40
@@ -998,6 +998,16 @@ def gerar_boato(request: Request):
         direcao += ("O boato deve ser " + (
             "maldoso, desconfiado ou acusador" if negativo else "elogioso, talvez exagerado")
                     + f".\nTom: {tom}. Quem conta: {narrador}.")
+    elif fama:
+        falso = False
+        tipo = "NEM TOTALMENTE VERDADEIRO NEM TOTALMENTE FALSO: parte de um fundo real, mas distorcido, como fofoca de verdade"
+        direcao = (
+            f"O boato é sobre {fama['nome']}, do grupo de aventureiros que anda pela região.\n"
+            f"O que realmente aconteceu: {fama['texto']}\n"
+            "Conte como fofoca de taverna: exagere, troque detalhes, esqueça partes ou invente um desfecho mais "
+            "impressionante, sem nunca citar a fonte como um relatório.\n"
+            f"Tom: {tom}. Quem conta: {narrador}."
+        )
 
     else:
         falso = random.random() < 0.1
