@@ -126,7 +126,7 @@ def _norm_item(r):
 TABELAS = {
     "local":   ("locations",   _norm_local,   "locais"),
     "monstro": ("bestiary",    _norm_monstro, "monstros"),
-    "npc":     ("npcs", _norm_npc, "npcs"),
+    "npc":     ("npcs",        _norm_npc,     "npcs"),
     "item":    ("magic_items", _norm_item,    "itens"),
 }
 

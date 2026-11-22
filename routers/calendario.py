@@ -7,7 +7,7 @@ from servicos import calendario_atual, gravar_calendario, avancar_calendario
 from utils import para_dia_total
 from datetime import datetime
 from utils import para_dia_total, MESES_PADRAO
-from routers.lendas import distorcer_com_o_tem
+from routers.lendas import distorcer_com_o_tempo
 
 
 def campanha_valida(campaign_id: str):

@@ -8,8 +8,6 @@ from core import supabase, campanha_atual
 
 router = APIRouter(tags=["lendas"], dependencies=[Depends(exigir_mestre)])
 
-DIAS_POR_VOLTA = 7
-
 
 class LendaIn(BaseModel):
     titulo: str
@@ -69,6 +67,8 @@ def apagar(lenda_id: str):
     (supabase.table("lendas").delete()
      .eq("id", lenda_id).eq("campaign_id", campanha_atual()).execute())
     return {"success": True}
+
+DIAS_POR_VOLTA = 7
 
 def distorcer_com_o_tempo(campaign_id: str, dias: int):
     """A cada DIAS_POR_VOLTA dias, a fofoca em circulação dá mais uma volta; passando de 6, recomeça."""
