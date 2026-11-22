@@ -2,6 +2,7 @@ import inspect
 import json
 import time
 from typing import Optional
+from utils import estado_por_pontos
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
@@ -169,15 +170,65 @@ def _npcs_por_local(campaign_id: str, npcs_ok=None) -> dict:
         for loc, ids in ids_por_local.items()
     }
 
-def _montar_atlas(campaign_id: str, locais_ok=None, regioes_ok=None, npcs_ok=None):
+ORDEM_ESTADO = {"hostil": 0, "neutra": 1, "aliada": 2}
+
+
+def _faccoes_do_atlas(campaign_id: str, faccoes_ok=None, segredos_ok=None) -> list:
+    """faccoes_ok=None: mestre (tudo). set: só as facções reveladas, com os segredos já liberados."""
+    try:
+        facs = (supabase.table("factions").select("id, name, type, reputation_score")
+                .eq("campaign_id", campaign_id).execute().data or [])
+        presencas = (supabase.table("faccao_presenca").select("faccao_id, regiao_id")
+                     .eq("campaign_id", campaign_id).execute().data or [])
+        notas = (supabase.table("faccao_notas").select("faccao_id, notas")
+                 .eq("campaign_id", campaign_id).execute().data or [])
+        segredos = (supabase.table("faccao_segredos").select("id, faccao_id, texto, libera_em")
+                    .eq("campaign_id", campaign_id).execute().data or [])
+    except Exception as e:
+        print(f"[AVISO] Facções do atlas indisponíveis: {e}")
+        return []
+
+    publico = {n["faccao_id"]: (n.get("notas") or {}).get("publico", "") for n in notas}
+    revelados = segredos_ok or set()
+    resultado = []
+    for f in facs:
+        fid = str(f["id"])
+        if faccoes_ok is not None and fid not in faccoes_ok:
+            continue
+        estado = estado_por_pontos(f.get("reputation_score") or 0)
+        itens = []
+        for s in segredos:
+            if s["faccao_id"] != fid:
+                continue
+            liberado = (ORDEM_ESTADO.get(estado, 1) >= ORDEM_ESTADO.get(s["libera_em"], 2)
+                        or str(s["id"]) in revelados)
+            if faccoes_ok is None or liberado:       # o mestre vê todos; o jogador, só os liberados
+                itens.append({"id": s["id"], "texto": s["texto"],
+                              "libera_em": s["libera_em"], "liberado": liberado})
+        resultado.append({
+            "id": f["id"], "nome": f["name"], "tipo": f.get("type") or "", "estado": estado,
+            "publico": publico.get(fid, ""),
+            "regioes": [p["regiao_id"] for p in presencas if p["faccao_id"] == fid],
+            "segredos": itens,
+        })
+    return resultado
+
+def _montar_atlas(campaign_id: str, locais_ok=None, regioes_ok=None, npcs_ok=None,
+                  faccoes_ok=None, segredos_ok=None):
+    """None = mestre (tudo). set = jogador (só o que foi revelado)."""
     locais = supabase.table("locations").select("*").eq("campaign_id", campaign_id).execute().data
     regioes = supabase.table("regioes").select("*").eq("campaign_id", campaign_id).execute().data
-    por_local = _npcs_por_local(campaign_id, npcs_ok)
     por_id = {str(r["id"]): r for r in locais}
+    por_local = _npcs_por_local(campaign_id, npcs_ok)
+
+    def faccao_visivel(r):
+        fid = r.get("faction_id")
+        return str(fid) if fid and (faccoes_ok is None or str(fid) in faccoes_ok) else None
 
     pins = [
         {**_norm_local(r), "x": r.get("pin_x"), "y": r.get("pin_y"), "regiao_id": r.get("regiao_id"),
-         "npcs": por_local.get((r.get("name") or "").strip().lower(), [])}
+         "npcs": por_local.get((r.get("name") or "").strip().lower(), []),
+         "faccao_id": faccao_visivel(r)}
         for r in locais
         if locais_ok is None or str(r["id"]) in locais_ok
     ]
@@ -187,7 +238,6 @@ def _montar_atlas(campaign_id: str, locais_ok=None, regioes_ok=None, npcs_ok=Non
         if g.get("cx") is None:
             continue
         descoberta = regioes_ok is None or str(g["id"]) in regioes_ok
-        # a forma vai para todos (a silhueta); o resto só se a terra foi descoberta
         item = {"id": g["id"], "cx": g["cx"], "cy": g["cy"],
                 "raio": g.get("raio") or 8, "semente": g.get("semente") or 1,
                 "descoberta": descoberta}
@@ -200,19 +250,19 @@ def _montar_atlas(campaign_id: str, locais_ok=None, regioes_ok=None, npcs_ok=Non
                 "subtitulo": nl["subtitulo"] if nl else "",
                 "imagem_url": g.get("imagem_url") or None,
                 "local_id": g.get("local_id"),
-                "ambiente": g.get("ambiente") or "floresta",
             })
         regs.append(item)
 
-    return {"pins": pins, "regioes": regs}
+    return {"pins": pins, "regioes": regs,
+            "faccoes": _faccoes_do_atlas(campaign_id, faccoes_ok, segredos_ok)}
 
 
 @router.get("/atlas/{campaign_id}")
 async def atlas(campaign_id: str, user: dict = Depends(usuario_atual)):
     rev = _ids_descobertos(campaign_id, user)
-    return {"success": True,
-            "data": _montar_atlas(campaign_id, rev.get("local", set()),
-                                  rev.get("regiao", set()), rev.get("npc", set()))}
+    return {"success": True, "data": _montar_atlas(
+        campaign_id, rev.get("local", set()), rev.get("regiao", set()), rev.get("npc", set()),
+        rev.get("faccao", set()), rev.get("segredo", set()))}
 
 
 @router.get("/atlas-mestre/{campaign_id}", dependencies=MESTRE)
