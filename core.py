@@ -24,7 +24,8 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_CHAVE = os.getenv("SUPABASE_SERVICE_KEY") or os.getenv("SUPABASE_KEY")
 if not SUPABASE_URL or not SUPABASE_CHAVE:
     raise RuntimeError("Defina SUPABASE_URL e SUPABASE_SERVICE_KEY")
-print(f"[core] chave do Supabase com papel: {_papel_da_chave(SUPABASE_CHAVE)}", flush=True)
+_origem = "SUPABASE_SERVICE_KEY" if os.getenv("SUPABASE_SERVICE_KEY") else "SUPABASE_KEY"
+print(f"[core] chave vinda de {_origem}, papel: {_papel_da_chave(SUPABASE_CHAVE)}", flush=True)
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_CHAVE)
 CAMPANHA_PADRAO = "00000000-0000-0000-0000-000000000001"
