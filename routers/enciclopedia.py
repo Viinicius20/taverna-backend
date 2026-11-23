@@ -61,6 +61,12 @@ async def listar_descobertas(campaign_id: str, tipo: Optional[str] = None,
     q = supabase.table("descobertas").select("*").eq("campaign_id", campaign_id)
     if tipo:
         q = q.eq("tipo", tipo)
+    linhas = q.execute().data or []
+    if user.get("role") != "mestre":
+        meus = {c["id"] for c in (supabase.table("characters").select("id")
+                .eq("campaign_id", campaign_id).eq("user_id", user["sub"]).execute().data or [])}
+        linhas = [d for d in linhas if d["personagem_id"] is None or d["personagem_id"] in meus]
+    return {"success": True, "data": linhas}
     return {"success": True, "data": q.execute().data}
 
 
@@ -72,7 +78,12 @@ async def revelar(req: DescobertaIn):
     q = q.eq("personagem_id", req.personagem_id) if req.personagem_id else q.is_("personagem_id", "null")
     if q.execute().data:
         return {"success": True, "ja_existia": True}
-    r = supabase.table("descobertas").insert(req.dict()).execute()
+    try:
+        r = supabase.table("descobertas").insert(req.dict()).execute()
+    except Exception as e:
+        if "23505" in str(e) or "duplicate" in str(e).lower():
+            return {"success": True, "ja_existia": True}
+        raise HTTPException(500, "Erro ao revelar.")
     return {"success": True, "data": r.data}
 
 

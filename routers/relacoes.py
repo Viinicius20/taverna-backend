@@ -62,6 +62,7 @@ def criar_relacao(campaign_id: str, body: RelacaoNova):
         "target_type": body.target_type, "target_id": body.target_id,
         "kind": body.kind, "note": body.note.strip(), "secret": body.secret,
     }).execute()
+    _sincronizar_conhecidos(res.data[0])
     return {"success": True, "data": res.data[0]}
 
 def filtrar_perspectiva(nos: dict, arestas: list, conhecidos: set, personagem_id: str):
@@ -124,3 +125,58 @@ def grafo(campaign_id: str, como: Optional[str] = None):
 def apagar_relacao(campaign_id: str, relacao_id: str):
     supabase.table("relationships").delete().eq("id", relacao_id).eq("campaign_id", campaign_id).execute()
     return {"success": True}
+
+class RelacaoEdicao(BaseModel):
+    kind: Optional[str] = None
+    note: Optional[str] = None
+    secret: Optional[bool] = None
+
+
+def _sincronizar_conhecidos(rel: dict):
+    """Vínculo aberto 'conhece' entre personagem e NPC: o personagem passa a conhecer o NPC."""
+    if rel.get("kind") != "conhece" or rel.get("secret"):
+        return
+    if rel["source_type"] == "character" and rel["target_type"] == "npc":
+        npc_id, char_id = rel["target_id"], rel["source_id"]
+    elif rel["source_type"] == "npc" and rel["target_type"] == "character":
+        npc_id, char_id = rel["source_id"], rel["target_id"]
+    else:
+        return
+    try:
+        supabase.table("npc_conhecidos").upsert({"npc_id": npc_id, "character_id": char_id}).execute()
+    except Exception as e:
+        print(f"[AVISO] Não consegui marcar o NPC como conhecido: {e}")
+
+
+@router.patch("/relacoes/{campaign_id}/{relacao_id}", dependencies=[Depends(exigir_mestre)])
+def editar_relacao(campaign_id: str, relacao_id: str, body: RelacaoEdicao):
+    if body.kind is not None and body.kind not in VINCULOS:
+        raise HTTPException(400, "Tipo de vínculo inválido")
+    achado = (supabase.table("relationships").select("*")
+              .eq("id", relacao_id).eq("campaign_id", campaign_id).limit(1).execute().data)
+    if not achado:
+        raise HTTPException(404, "Vínculo não encontrado")
+    atual = achado[0]
+
+    campos = {}
+    if body.kind is not None:
+        campos["kind"] = body.kind
+    if body.note is not None:
+        campos["note"] = body.note.strip()[:300]
+    if body.secret is not None:
+        campos["secret"] = body.secret
+    if not campos:
+        return {"success": True, "data": atual}
+
+    if "kind" in campos:   # não deixa criar um vínculo repetido
+        repetido = (supabase.table("relationships").select("id").eq("campaign_id", campaign_id)
+                    .eq("source_type", atual["source_type"]).eq("source_id", atual["source_id"])
+                    .eq("target_type", atual["target_type"]).eq("target_id", atual["target_id"])
+                    .eq("kind", campos["kind"]).neq("id", relacao_id).limit(1).execute().data)
+        if repetido:
+            raise HTTPException(409, "Esse vínculo já existe")
+
+    supabase.table("relationships").update(campos).eq("id", relacao_id).execute()
+    final = {**atual, **campos}
+    _sincronizar_conhecidos(final)
+    return {"success": True, "data": final}
