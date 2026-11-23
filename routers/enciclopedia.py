@@ -14,6 +14,10 @@ from ia import gerar_texto_com_gemini
 
 router = APIRouter()
 
+NPC_LOCAL_KEY = "location_id"
+COL_TITULO = "titulo"
+COL_TEXTO = "descricao"
+
 
 # ---------- utilidades ----------
 
@@ -423,8 +427,18 @@ async def painel_descobertas(campaign_id: str):
         lista.sort(key=lambda x: x["nome"].lower())
     return {"success": True, "data": por_tipo}
 
-NPC_LOCAL_KEY = "location_id"
-
+def registrar_cronica(campaign_id: str, titulo: str, texto: str = ""):
+    """Best-effort: se falhar, a revelação continua funcionando."""
+    try:
+        cal = calendario_atual(campaign_id)      # importe de onde ele é definido
+        data_txt = cal.get("texto", "")
+        supabase.table("world_changelog").insert({
+            "campaign_id": campaign_id,
+            COL_TITULO: titulo,
+            COL_TEXTO: f"{texto} ({data_txt})" if data_txt else texto,
+        }).execute()
+    except Exception as e:
+        print(f"[AVISO] Crônica não registrada: {e}")
 
 class ItemCadeia(BaseModel):
     tipo: str          # "local" ou "npc"
@@ -485,5 +499,8 @@ async def revelar_cadeia(campaign_id: str, body: CadeiaIn):
                       "entidade_id": it.entidade_id, "personagem_id": None})
     if novos:
         supabase.table("descobertas").insert(novos).execute()
-    contagem = {t: sum(1 for n in novos if n["tipo"] == t) for t in permitidos}
+        nomes = {"local": ("local", "locais"), "npc": ("NPC", "NPCs")}
+        partes = [f"{n} {nomes[t][0] if n == 1 else nomes[t][1]}"
+                  for t, n in contagem_de(novos).items() if n]
+        registrar_cronica(campaign_id, "O mundo se revela", ", ".join(partes) + " descobertos.")
     return {"success": True, "revelados": len(novos), "por_tipo": contagem}
