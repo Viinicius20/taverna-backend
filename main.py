@@ -181,7 +181,7 @@ app.include_router(enciclopedia.router)
 app.include_router(lendas.router)
 app.include_router(faccao_notas.router)
 app.include_router(faccoes_atlas.router)
-app.include_router(bestiario_fotos.router
+app.include_router(bestiario_fotos.router)
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 MODELOS_GEMINI = ["gemini-2.5-flash", "gemini-3.6-flash"]
