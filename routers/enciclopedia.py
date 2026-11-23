@@ -382,3 +382,43 @@ async def gerar_regiao(regiao_id: str, req: GerarRegiaoIn):
         }).execute()
         novos.append(r.data[0])
     return {"success": True, "descricao": dados["descricao"], "cidades": novos}
+
+@router.get("/descobertas-painel/{campaign_id}", dependencies=MESTRE)
+async def painel_descobertas(campaign_id: str):
+    desc = (supabase.table("descobertas").select("id, tipo, entidade_id, personagem_id")
+            .eq("campaign_id", campaign_id).execute().data or [])
+    reveladas = {(d["tipo"], str(d["entidade_id"])): d["id"] for d in desc if d["personagem_id"] is None}
+
+    def consulta(tabela, campos):
+        try:
+            return supabase.table(tabela).select(campos).eq("campaign_id", campaign_id).execute().data or []
+        except Exception as e:
+            print(f"[AVISO] Painel de descobertas sem {tabela}: {e}")
+            return []
+
+    def item(tipo, r, nome, sub="", aviso=""):
+        did = reveladas.get((tipo, str(r["id"])))
+        return {"id": r["id"], "nome": nome or "(sem nome)", "subtitulo": sub or "", "aviso": aviso,
+                "revelado": did is not None, "descoberta_id": did}
+
+    regioes = consulta("regioes", "id, nome")
+    locais = consulta("locations", "id, name, type, regiao_id")
+    npcs = consulta("npcs", "id, name, data")
+    facs = consulta("factions", "id, name, type")
+    segredos = consulta("faccao_segredos", "id, faccao_id, texto")
+
+    terras_reveladas = {str(r["id"]) for r in regioes if ("regiao", str(r["id"])) in reveladas}
+    nome_fac = {str(f["id"]): f["name"] for f in facs}
+
+    por_tipo = {
+        "regiao": [item("regiao", r, r.get("nome"), "Terra") for r in regioes],
+        "local": [item("local", l, l.get("name"), (l.get("type") or "").capitalize(),
+                       "terra ainda oculta" if l.get("regiao_id") and str(l["regiao_id"]) not in terras_reveladas else "")
+                  for l in locais],
+        "npc": [item("npc", n, n.get("name"), (n.get("data") or {}).get("occupation", "")) for n in npcs],
+        "faccao": [item("faccao", f, f.get("name"), f.get("type") or "") for f in facs],
+        "segredo": [item("segredo", s, (s.get("texto") or "")[:80], nome_fac.get(str(s["faccao_id"]), "")) for s in segredos],
+    }
+    for lista in por_tipo.values():
+        lista.sort(key=lambda x: x["nome"].lower())
+    return {"success": True, "data": por_tipo}
