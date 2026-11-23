@@ -422,3 +422,68 @@ async def painel_descobertas(campaign_id: str):
     for lista in por_tipo.values():
         lista.sort(key=lambda x: x["nome"].lower())
     return {"success": True, "data": por_tipo}
+
+NPC_LOCAL_KEY = "location_id"
+
+
+class ItemCadeia(BaseModel):
+    tipo: str          # "local" ou "npc"
+    entidade_id: str
+
+
+class CadeiaIn(BaseModel):
+    itens: list[ItemCadeia]
+
+
+def _ja_reveladas(campaign_id: str) -> set:
+    desc = (supabase.table("descobertas").select("tipo, entidade_id, personagem_id")
+            .eq("campaign_id", campaign_id).execute().data or [])
+    return {(d["tipo"], str(d["entidade_id"])) for d in desc if d["personagem_id"] is None}
+
+
+@router.get("/descobertas-cadeia/{campaign_id}/{tipo}/{entidade_id}", dependencies=MESTRE)
+async def filhos_da_cadeia(campaign_id: str, tipo: str, entidade_id: str):
+    """O que pode ser revelado junto: terra -> locais dela; local -> NPCs que estão nele."""
+    if tipo not in ("regiao", "local"):
+        raise HTTPException(status_code=400, detail="tipo deve ser 'regiao' ou 'local'")
+    reveladas = _ja_reveladas(campaign_id)
+    filhos = []
+
+    if tipo == "regiao":
+        locais = (supabase.table("locations").select("id, name, type")
+                  .eq("campaign_id", campaign_id).eq("regiao_id", entidade_id).execute().data or [])
+        for l in locais:
+            if ("local", str(l["id"])) not in reveladas:
+                filhos.append({"tipo": "local", "entidade_id": str(l["id"]),
+                               "nome": l.get("name") or "(sem nome)",
+                               "subtitulo": (l.get("type") or "").capitalize()})
+    else:
+        npcs = (supabase.table("npcs").select("id, name, data")
+                .eq("campaign_id", campaign_id).execute().data or [])
+        for n in npcs:
+            local_atual = (n.get("data") or {}).get(NPC_LOCAL_KEY)
+            if local_atual and str(local_atual) == entidade_id and ("npc", str(n["id"])) not in reveladas:
+                filhos.append({"tipo": "npc", "entidade_id": str(n["id"]),
+                               "nome": n.get("name") or "(sem nome)",
+                               "subtitulo": (n.get("data") or {}).get("occupation", "")})
+
+    return {"success": True, "data": filhos}
+
+
+@router.post("/descobertas-cadeia/{campaign_id}", dependencies=MESTRE)
+async def revelar_cadeia(campaign_id: str, body: CadeiaIn):
+    """Revela vários itens de uma vez (um único insert, então ou entra tudo ou nada). Idempotente."""
+    permitidos = {"local", "npc"}
+    reveladas = _ja_reveladas(campaign_id)
+    novos, vistos = [], set()
+    for it in body.itens:
+        chave = (it.tipo, str(it.entidade_id))
+        if it.tipo not in permitidos or chave in reveladas or chave in vistos:
+            continue
+        vistos.add(chave)
+        novos.append({"campaign_id": campaign_id, "tipo": it.tipo,
+                      "entidade_id": it.entidade_id, "personagem_id": None})
+    if novos:
+        supabase.table("descobertas").insert(novos).execute()
+    contagem = {t: sum(1 for n in novos if n["tipo"] == t) for t in permitidos}
+    return {"success": True, "revelados": len(novos), "por_tipo": contagem}

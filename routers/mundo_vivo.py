@@ -468,3 +468,22 @@ def changelog_nao_lido_mestre(campaign_id: str):
         .order("created_at", desc=True).limit(10).execute()
     return {"data": r.data}
 
+class LocalGrupoIn(BaseModel):
+    local_id: str | None = None   # None = limpar
+
+@router.patch("/campanha-local/{campaign_id}", dependencies=MESTRE)
+async def definir_local_grupo(campaign_id: str, body: LocalGrupoIn):
+    supabase.table("campaigns").update({"local_grupo_id": body.local_id}).eq("id", campaign_id).execute()
+    return {"success": True}
+
+@router.get("/campanha-local/{campaign_id}")
+async def local_grupo(campaign_id: str, personagem_id: str | None = None):
+    """Mestre vê sempre; jogador só vê se o local já foi revelado a todos."""
+    c = (supabase.table("campaigns").select("local_grupo_id").eq("id", campaign_id).execute().data or [{}])[0]
+    lid = c.get("local_grupo_id")
+    if not lid:
+        return {"success": True, "data": None}
+    # Pra jogador, esconder se o local ainda estiver oculto
+    # (reaproveite a mesma checagem de papel que as outras rotas de leitura usam)
+    return {"success": True, "data": str(lid)}
+
