@@ -1097,6 +1097,14 @@ def ouvir_boato(request: Request, character_id: str, pericia: str = "investigati
     linha = supabase.table("characters").select("data").eq("id", character_id).limit(1).execute().data
     if not linha:
         raise HTTPException(404, "Personagem não encontrado")
+    cal = (supabase.table("calendario").select("dia_total")
+           .eq("campaign_id", campanha_atual()).limit(1).execute().data)
+    hoje = (cal[0].get("dia_total") if cal else 0) or 0
+    if user.get("role") != "mestre":
+        ja = (supabase.table("boatos_ouvidos").select("dia_total")
+              .eq("character_id", character_id).limit(1).execute().data)
+        if ja and ja[0]["dia_total"] == hoje:
+            raise HTTPException(429, "Você já ouviu os boatos hoje. Volte amanhã.")
 
     d = linha[0].get("data") or {}
     bonus = (d.get("skills") or {}).get(pericia)
@@ -1121,6 +1129,8 @@ def ouvir_boato(request: Request, character_id: str, pericia: str = "investigati
     else:   # o jogador não vê se o boato é falso nem a categoria
         for chave in ("falso", "distorcido", "distorcao"):
             resultado["data"].pop(chave, None)
+    if user.get("role") != "mestre":
+        supabase.table("boatos_ouvidos").upsert({"character_id": character_id, "dia_total": hoje}).execute()
     return resultado
 
 @app.post("/sessions", dependencies=MESTRE)
