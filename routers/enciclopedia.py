@@ -472,7 +472,7 @@ async def filhos_da_cadeia(campaign_id: str, tipo: str, entidade_id: str):
 
 @router.post("/descobertas-cadeia/{campaign_id}", dependencies=MESTRE)
 async def revelar_cadeia(campaign_id: str, body: CadeiaIn):
-    """Revela vários itens de uma vez (um único insert, então ou entra tudo ou nada). Idempotente."""
+    """Revela vários itens de uma vez (um único insert, então ou entra tudo ou nada)."""
     permitidos = {"local", "npc"}
     reveladas = _ja_reveladas(campaign_id)
     novos, vistos = [], set()
