@@ -3,6 +3,7 @@ import json
 import time
 from typing import Optional
 from utils import estado_por_pontos
+from locais_util import indice_de_locais, normalizar_nome
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
@@ -147,17 +148,18 @@ async def enciclopedia(campaign_id: str, user: dict = Depends(usuario_atual)):
 
 # ---------- atlas ----------
 
-def _npcs_por_local(campaign_id: str, npcs_ok=None) -> dict:
+def _npcs_por_local(campaign_id: str, indice: dict, npcs_ok=None) -> dict:
+    """{id do local: [{'id', 'nome'}]}. npcs_ok=None: mestre (todos); set: só os revelados."""
     linhas = (supabase.table("npc_notas").select("npc_id, notas")
               .eq("campaign_id", campaign_id).execute().data or [])
     ids_por_local = {}
     for l in linhas:
-        loc = ((l.get("notas") or {}).get("location") or "").strip().lower()
-        if not loc:
+        lid = indice.get(normalizar_nome((l.get("notas") or {}).get("location") or ""))
+        if not lid:
             continue
         if npcs_ok is not None and str(l["npc_id"]) not in npcs_ok:
             continue
-        ids_por_local.setdefault(loc, []).append(l["npc_id"])
+        ids_por_local.setdefault(lid, []).append(l["npc_id"])
 
     todos = list({i for ids in ids_por_local.values() for i in ids})
     nomes = {}
@@ -166,11 +168,9 @@ def _npcs_por_local(campaign_id: str, npcs_ok=None) -> dict:
             nomes[str(c["id"])] = c["name"]
 
     return {
-        loc: [{"id": i, "nome": nomes[str(i)]} for i in ids if str(i) in nomes]
-        for loc, ids in ids_por_local.items()
+        lid: [{"id": i, "nome": nomes[str(i)]} for i in ids if str(i) in nomes]
+        for lid, ids in ids_por_local.items()
     }
-
-ORDEM_ESTADO = {"hostil": 0, "neutra": 1, "aliada": 2}
 
 
 def _faccoes_do_atlas(campaign_id: str, faccoes_ok=None, segredos_ok=None) -> list:
@@ -219,7 +219,7 @@ def _montar_atlas(campaign_id: str, locais_ok=None, regioes_ok=None, npcs_ok=Non
     locais = supabase.table("locations").select("*").eq("campaign_id", campaign_id).execute().data
     regioes = supabase.table("regioes").select("*").eq("campaign_id", campaign_id).execute().data
     por_id = {str(r["id"]): r for r in locais}
-    por_local = _npcs_por_local(campaign_id, npcs_ok)
+    por_local = _npcs_por_local(campaign_id, indice_de_locais(locais), npcs_ok)
 
     def faccao_visivel(r):
         fid = r.get("faction_id")
@@ -227,7 +227,7 @@ def _montar_atlas(campaign_id: str, locais_ok=None, regioes_ok=None, npcs_ok=Non
 
     pins = [
         {**_norm_local(r), "x": r.get("pin_x"), "y": r.get("pin_y"), "regiao_id": r.get("regiao_id"),
-         "npcs": por_local.get((r.get("name") or "").strip().lower(), []),
+                  "npcs": por_local.get(str(r["id"]), []),
          "faccao_id": faccao_visivel(r)}
         for r in locais
         if locais_ok is None or str(r["id"]) in locais_ok

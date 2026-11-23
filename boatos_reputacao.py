@@ -1,4 +1,5 @@
 from core import supabase
+from locais_util import indice_de_locais, normalizar_nome
 
 LIMITE_PADRAO = 5
 MAX_MOTIVOS = 3
@@ -13,17 +14,18 @@ def pressoes_de_reputacao(campaign_id: str) -> list:
     except Exception:
         return []
 
+    indice = indice_de_locais(locais)
     pontos = {str(n["id"]): (n.get("relation_score") or 0) for n in npcs}
-    por_local = {}
+    por_local = {}  # id do local -> ids dos NPCs que estão lá
     for n in notas:
-        loc = ((n.get("notas") or {}).get("location") or "").strip().lower()
-        if loc and str(n["npc_id"]) in pontos:
-            por_local.setdefault(loc, []).append(str(n["npc_id"]))
+        lid = indice.get(normalizar_nome((n.get("notas") or {}).get("location") or ""))
+        if lid and str(n["npc_id"]) in pontos:
+            por_local.setdefault(lid, []).append(str(n["npc_id"]))
 
     resultado = []
     for l in locais:
         nome = (l.get("name") or "").strip()
-        ids = por_local.get(nome.lower(), [])
+        ids = por_local.get(str(l["id"]), [])
         if not ids:
             continue
         limite = l.get("limite_reputacao") or LIMITE_PADRAO
