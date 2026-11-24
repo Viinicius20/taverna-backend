@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from servicos import propagar_consequencias_evento
 from typing import Optional
 import json
+from servicos import calendario_atual
 
 router = APIRouter()
 
@@ -287,7 +288,6 @@ def marcar_changelog_lido(changelog_id: str, personagem_id: str = Body(..., embe
 
 @router.get("/world-changelog/{campaign_id}", dependencies=MESTRE)
 def listar_changelog(campaign_id: str):
-    """Histórico completo — usado pelo mestre no MundoVivo."""
     resp = supabase.table("world_changelog").select("*") \
         .eq("campaign_id", campaign_id) \
         .order("created_at", desc=True).execute()
@@ -474,6 +474,37 @@ class LocalGrupoIn(BaseModel):
 @router.patch("/campanha-local/{campaign_id}", dependencies=MESTRE)
 async def definir_local_grupo(campaign_id: str, body: LocalGrupoIn):
     supabase.table("campaigns").update({"local_grupo_id": body.local_id}).eq("id", campaign_id).execute()
+
+    if body.local_id:
+        try:
+            loc = (supabase.table("locations").select("name")
+                   .eq("id", body.local_id).execute().data or [{}])[0]
+            nome = loc.get("name", "um novo lugar")
+
+            # evita crônica repetida
+            ultimo = (supabase.table("world_changelog").select("content")
+                      .eq("campaign_id", campaign_id)
+                      .order("created_at", desc=True).limit(1).execute().data)
+            if ultimo and f"O grupo chegou a {nome}." in ultimo[0]["content"]:
+                return {"success": True}
+
+            ult = (supabase.table("sessions").select("session_number")
+                   .eq("campaign_id", campaign_id)
+                   .order("session_number", desc=True).limit(1).execute().data)
+            numero = (ult[0]["session_number"] if ult else 0) + 1
+
+            try:
+                data_game = calendario_atual(campaign_id)["texto"]
+            except Exception:
+                data_game = ""
+
+            supabase.table("world_changelog").insert({
+                "campaign_id": campaign_id,
+                "session_number": numero,
+                "content": f"🧭 {data_game + ' · ' if data_game else ''}O grupo chegou a {nome}.",
+            }).execute()
+        except Exception as e:
+            print(f"[AVISO] Crônica do grupo falhou: {e}")
     return {"success": True}
 
 @router.get("/campanha-local/{campaign_id}")
