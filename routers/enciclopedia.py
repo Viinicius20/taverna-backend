@@ -11,6 +11,8 @@ from pydantic import BaseModel
 from auth import MESTRE, usuario_atual
 from core import supabase
 from ia import gerar_texto_com_gemini
+import json
+import re
 
 router = APIRouter()
 
@@ -566,8 +568,10 @@ async def wiki_indice_jogador(campaign_id: str):
 
 LORE = {
     "regiao":   [("descricao", "Descrição", False), ("description", "Descrição", False)],
-    "local":    [("description", "Descrição", False), ("history", "História", False),
-                 ("lore", "Lore", False), ("quests", "Missões", True)],
+    "local":  [("description", "Descrição", False), ("region_info", "Região", False),
+              ("commerce", "Comércio", False), ("language", "Idioma", False),
+              ("monsters", "Monstros e perigos", True), ("quests", "Ideias de quest", True),
+              ("boss", "Ameaça principal", True)],
     "npc":      [("backstory", "História", False), ("history", "História", False),
                  ("background", "Origem", False), ("description", "Descrição", False),
                  ("appearance", "Aparência", False)],
@@ -576,6 +580,46 @@ LORE = {
 }
 TABELA_DE = {"regiao": "regioes", "local": "locations", "npc": "npcs",
              "faccao": "factions", "criatura": "bestiary"}
+
+def _item(x):
+    if isinstance(x, str):
+        s = x.strip()
+        if s and s[0] in "{[":
+            try:
+                return _item(json.loads(s))
+            except Exception:
+                pass
+        s = re.sub(r"^\s*\d+[.)]\s*", "", s)
+        m = re.match(r"\*\*(.+?)\*\*\s*[:\-–]?\s*(.*)", s, re.S)
+        if m:
+            return {"titulo": m.group(1).strip().rstrip(":").strip(), "texto": m.group(2).strip()}
+        return {"titulo": "", "texto": s.replace("**", "")}
+    if isinstance(x, dict):
+        titulo = x.get("title") or x.get("titulo") or x.get("name") or x.get("nome") or ""
+        texto = (x.get("description") or x.get("descricao") or x.get("desc")
+                 or x.get("texto") or x.get("text") or "")
+        return {"titulo": str(titulo).strip(), "texto": str(texto).strip()}
+    return {"titulo": "", "texto": str(x).strip()}
+
+
+def _normalizar(valor):
+    if isinstance(valor, str):
+        s = valor.strip()
+        if not s:
+            return None
+        if s[0] in "[{":
+            try:
+                valor = json.loads(s)
+            except Exception:
+                return ("texto", s)
+        else:
+            return ("texto", s)
+    if isinstance(valor, dict):
+        valor = [valor]
+    if isinstance(valor, list):
+        itens = [i for i in (_item(x) for x in valor) if i["titulo"] or i["texto"]]
+        return ("itens", itens) if itens else None
+    return None
 
 def _detalhe(campaign_id: str, tipo: str, entidade_id: str, mestre: bool):
     if tipo not in TABELA_DE:
@@ -607,10 +651,16 @@ def _detalhe(campaign_id: str, tipo: str, entidade_id: str, mestre: bool):
     for chave, rotulo, so_mestre in defs:
         if so_mestre and not mestre:
             continue
-        texto = fonte.get(chave) or data.get(chave)
-        if isinstance(texto, str) and texto.strip() and chave not in vistos:
-            vistos.add(chave)
-            campos.append({"chave": chave, "rotulo": rotulo, "texto": texto.strip()})
+        if chave in vistos:
+            continue
+        norm = _normalizar(fonte.get(chave) or data.get(chave))
+        if not norm:
+            continue
+        vistos.add(chave)
+        formato, conteudo = norm
+        campo = {"chave": chave, "rotulo": rotulo}
+        campo["texto" if formato == "texto" else "itens"] = conteudo
+        campos.append(campo)
 
     resp = {"tipo": tipo, "id": row["id"], "campos": campos}
     if mestre:

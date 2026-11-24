@@ -8,7 +8,7 @@ import uuid
 
 router = APIRouter(tags=["bestiario-fotos"], dependencies=[Depends(exigir_mestre)])
 
-BUCKET = "bestiario"            # AJUSTE: nome do bucket público no Supabase Storage
+BUCKET = "bestiario"
 MAX_BYTES = 5 * 1024 * 1024
 
 
