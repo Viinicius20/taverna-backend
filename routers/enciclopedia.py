@@ -515,3 +515,51 @@ async def revelar_cadeia(campaign_id: str, body: CadeiaIn):
                   for t, n in contagem_de(novos).items() if n]
         registrar_cronica(campaign_id, "O mundo se revela", ", ".join(partes) + " descobertos.")
     return {"success": True, "revelados": len(novos), "por_tipo": contagem}
+
+def _resumo(txt, n=140):
+    txt = (txt or "").strip()
+    return txt if len(txt) <= n else txt[:n].rstrip() + "…"
+
+
+def _indice(campaign_id: str, mestre: bool) -> list:
+    reveladas = _ja_reveladas(campaign_id)
+
+    def tabela(nome, campos):
+        try:
+            return (supabase.table(nome).select(campos)
+                    .eq("campaign_id", campaign_id).execute().data or [])
+        except Exception as e:
+            print(f"[AVISO] Índice da wiki sem {nome}: {e}")
+            return []
+
+    itens = []
+
+    def add(tipo, r, nome, sub="", resumo="", revelado=None):
+        rev = (tipo, str(r["id"])) in reveladas if revelado is None else revelado
+        if not (mestre or rev):          # jogador só vê o revelado
+            return
+        itens.append({"tipo": tipo, "id": r["id"], "nome": nome or "(sem nome)",
+                      "subtitulo": sub or "", "resumo": _resumo(resumo), "revelado": rev})
+
+    for r in tabela("regioes", "id, nome"):
+        add("regiao", r, r.get("nome"), "Terra")
+    for l in tabela("locations", "id, name, type, description"):
+        add("local", l, l.get("name"), (l.get("type") or "").capitalize(), l.get("description"))
+    for n in tabela("npcs", "id, name, data"):
+        add("npc", n, n.get("name"), (n.get("data") or {}).get("occupation", ""))
+    for f in tabela("factions", "id, name, type"):
+        add("faccao", f, f.get("name"), f.get("type") or "")
+    for b in tabela("bestiary", "id, name, cr, size, type, discovered"):
+        add("criatura", b, b.get("name"), f"CR {b.get('cr')} · {b.get('size') or ''} {b.get('type') or ''}".strip(),
+            revelado=b.get("discovered") is not False)
+
+    itens.sort(key=lambda x: x["nome"].lower())
+    return itens
+
+@router.get("/wiki-indice/{campaign_id}", dependencies=MESTRE)
+async def wiki_indice_mestre(campaign_id: str):
+    return {"success": True, "data": _indice(campaign_id, True)}
+
+@router.get("/wiki-indice/{campaign_id}/jogador")
+async def wiki_indice_jogador(campaign_id: str):
+    return {"success": True, "data": _indice(campaign_id, False)}

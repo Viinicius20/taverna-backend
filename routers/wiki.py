@@ -14,6 +14,8 @@ class WikiReq(BaseModel):
     conteudo: str = ""
     notas_mestre: str = ""
     revelada: bool = False
+    entidade_tipo: Optional[str] = None
+    entidade_id: Optional[str] = None
 
 
 class WikiEditReq(BaseModel):
@@ -22,15 +24,17 @@ class WikiEditReq(BaseModel):
     conteudo: Optional[str] = None
     notas_mestre: Optional[str] = None
     revelada: Optional[bool] = None
+    entidade_tipo: Optional[str] = None
+    entidade_id: Optional[str] = None
 
 
-@router.post("/wiki")
+@router.post("/wiki", dependencies=[Depends(exigir_mestre)])
 def criar_pagina_wiki(req: WikiReq):
     r = supabase.table("wiki_paginas").insert(req.dict()).execute()
     return {"data": r.data[0]}
 
 
-@router.get("/wiki/{campaign_id}")
+@router.get("/wiki/{campaign_id}", dependencies=[Depends(exigir_mestre)])
 def listar_wiki_mestre(campaign_id: str):
     r = supabase.table("wiki_paginas").select("*").eq("campaign_id", campaign_id).order("titulo").execute()
     return {"data": r.data}
@@ -44,7 +48,7 @@ def listar_wiki_jogador(campaign_id: str):
     return {"data": r.data}
 
 
-@router.patch("/wiki/{wiki_id}")
+@router.patch("/wiki/{wiki_id}", dependencies=[Depends(exigir_mestre)])
 def editar_pagina_wiki(wiki_id: str, req: WikiEditReq):
     campos = {k: v for k, v in req.dict().items() if v is not None}
     if not campos:
@@ -56,7 +60,7 @@ def editar_pagina_wiki(wiki_id: str, req: WikiEditReq):
     return {"data": r.data[0]}
 
 
-@router.delete("/wiki/{wiki_id}")
+@router.delete("/wiki/{wiki_id}", dependencies=[Depends(exigir_mestre)])
 def deletar_pagina_wiki(wiki_id: str):
     supabase.table("wiki_paginas").delete().eq("id", wiki_id).execute()
     return {"ok": True}
