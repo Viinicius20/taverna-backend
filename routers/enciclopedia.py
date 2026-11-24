@@ -141,12 +141,22 @@ def _norm_item(r):
             "descricao": "" if oculto else (r.get("description") or ""),
             "imagem": None if oculto else r.get("art_url")}
 
+def _norm_regiao(r):
+    return {"id": r["id"], "nome": r.get("nome"), "subtitulo": "Terra",
+            "descricao": r.get("descricao") or "", "imagem": None}
+
+def _norm_faccao(r):
+    return {"id": r["id"], "nome": r.get("name"), "subtitulo": r.get("type") or "",
+            "descricao": r.get("description") or "", "imagem": None}
+
 
 TABELAS = {
     "local":   ("locations",   _norm_local,   "locais"),
     "monstro": ("bestiary",    _norm_monstro, "monstros"),
     "npc":     ("npcs",        _norm_npc,     "npcs"),
     "item":    ("magic_items", _norm_item,    "itens"),
+    "regiao":  ("regioes", _norm_regiao, "terras"),
+    "faccao": ("factions", _norm_faccao, "faccoes"),
 }
 
 
@@ -160,13 +170,37 @@ async def enciclopedia(campaign_id: str, user: dict = Depends(usuario_atual)):
         linhas = supabase.table(tabela).select("*").in_("id", ids).execute().data if ids else []
         saida[chave] = sorted((norm(r) for r in linhas), key=lambda x: (x["nome"] or "").lower())
 
+    pags = (supabase.table("TABELA_DA_WIKI")
+            .select("id, titulo, categoria, conteudo, entidade_tipo, entidade_id, updated_at")
+            .eq("campaign_id", campaign_id).eq("revelada", True)
+            .execute().data or [])
+    saida["paginas"] = sorted(pags, key=lambda p: (p.get("titulo") or "").lower())
+
+    ALIAS = {"criatura": "monstro"}  # a Wiki usa "criatura", a enciclopédia usa "monstro"
+    ids_str = {t: {str(i) for i in ids} for t, ids in ids_por_tipo.items()}
+
+    pags = (supabase.table("wiki_paginas")
+            .select("id, titulo, categoria, conteudo, entidade_tipo, entidade_id, updated_at")
+            .eq("campaign_id", campaign_id).eq("revelada", True)
+            .execute().data or [])
+
+    visiveis = []
+    for p in pags:
+        t = p.get("entidade_tipo")
+        if t and str(p.get("entidade_id")) not in ids_str.get(ALIAS.get(t, t), set()):
+            continue
+        visiveis.append(p)
+
+    saida["paginas"] = sorted(visiveis, key=lambda p: (p.get("titulo") or "").lower())
+
+    return {"success": True, "data": saida}
+
     return {"success": True, "data": saida}
 
 
 # ---------- atlas ----------
 
 def _npcs_por_local(campaign_id: str, indice: dict, npcs_ok=None) -> dict:
-    """{id do local: [{'id', 'nome'}]}. npcs_ok=None: mestre (todos); set: só os revelados."""
     linhas = (supabase.table("npc_notas").select("npc_id, notas")
               .eq("campaign_id", campaign_id).execute().data or [])
     ids_por_local = {}
@@ -191,7 +225,6 @@ def _npcs_por_local(campaign_id: str, indice: dict, npcs_ok=None) -> dict:
 
 
 def _faccoes_do_atlas(campaign_id: str, faccoes_ok=None, segredos_ok=None) -> list:
-    """faccoes_ok=None: mestre (tudo). set: só as facções reveladas, com os segredos já liberados."""
     try:
         facs = (supabase.table("factions").select("id, name, type, reputation_score")
                 .eq("campaign_id", campaign_id).execute().data or [])
@@ -232,7 +265,6 @@ def _faccoes_do_atlas(campaign_id: str, faccoes_ok=None, segredos_ok=None) -> li
 
 def _montar_atlas(campaign_id: str, locais_ok=None, regioes_ok=None, npcs_ok=None,
                   faccoes_ok=None, segredos_ok=None):
-    """None = mestre (tudo). set = jogador (só o que foi revelado)."""
     locais = supabase.table("locations").select("*").eq("campaign_id", campaign_id).execute().data
     regioes = supabase.table("regioes").select("*").eq("campaign_id", campaign_id).execute().data
     por_id = {str(r["id"]): r for r in locais}
@@ -423,6 +455,7 @@ async def painel_descobertas(campaign_id: str):
     npcs = consulta("npcs", "id, name, data")
     facs = consulta("factions", "id, name, type")
     segredos = consulta("faccao_segredos", "id, faccao_id, texto")
+    wiki = consulta("wiki_entradas", "id, titulo, categoria")
 
     terras_reveladas = {str(r["id"]) for r in regioes if ("regiao", str(r["id"])) in reveladas}
     nome_fac = {str(f["id"]): f["name"] for f in facs}
@@ -435,20 +468,18 @@ async def painel_descobertas(campaign_id: str):
         "npc": [item("npc", n, n.get("name"), (n.get("data") or {}).get("occupation", "")) for n in npcs],
         "faccao": [item("faccao", f, f.get("name"), f.get("type") or "") for f in facs],
         "segredo": [item("segredo", s, (s.get("texto") or "")[:80], nome_fac.get(str(s["faccao_id"]), "")) for s in segredos],
+        "wiki": [item("wiki", w, w.get("titulo"), w.get("categoria") or "") for w in wiki],
     }
     for lista in por_tipo.values():
         lista.sort(key=lambda x: x["nome"].lower())
     return {"success": True, "data": por_tipo}
 
-def registrar_cronica(campaign_id: str, titulo: str, texto: str = ""):
-    """Best-effort: se falhar, a revelação continua funcionando."""
+def registrar_cronica(campaign_id: str, motivo: str):
     try:
-        cal = calendario_atual(campaign_id)      # importe de onde ele é definido
-        data_txt = cal.get("texto", "")
-        supabase.table("world_changelog").insert({
-            "campaign_id": campaign_id,
-            COL_TITULO: titulo,
-            COL_TEXTO: f"{texto} ({data_txt})" if data_txt else texto,
+        cal = calendario_atual(campaign_id)   # AJUSTE: importe de onde ele é definido
+        supabase.table("calendario_log").insert({
+            "campaign_id": campaign_id, "dias": 0, "motivo": motivo,
+            "data_antes": cal["texto"], "data_depois": cal["texto"],
         }).execute()
     except Exception as e:
         print(f"[AVISO] Crônica não registrada: {e}")
@@ -508,12 +539,13 @@ async def revelar_cadeia(campaign_id: str, body: CadeiaIn):
         vistos.add(chave)
         novos.append({"campaign_id": campaign_id, "tipo": it.tipo,
                       "entidade_id": it.entidade_id, "personagem_id": None})
+    contagem = {t: sum(1 for n in novos if n["tipo"] == t) for t in permitidos}
     if novos:
         supabase.table("descobertas").insert(novos).execute()
-        nomes = {"local": ("local", "locais"), "npc": ("NPC", "NPCs")}
-        partes = [f"{n} {nomes[t][0] if n == 1 else nomes[t][1]}"
-                  for t, n in contagem_de(novos).items() if n]
-        registrar_cronica(campaign_id, "O mundo se revela", ", ".join(partes) + " descobertos.")
+        rotulos = {"local": ("local", "locais"), "npc": ("NPC", "NPCs")}
+        partes = [f"{n} {rotulos[t][0] if n == 1 else rotulos[t][1]}"
+                  for t, n in contagem.items() if n]
+        registrar_cronica(campaign_id, "Revelado: " + ", ".join(partes))
     return {"success": True, "revelados": len(novos), "por_tipo": contagem}
 
 def _resumo(txt, n=140):
@@ -523,6 +555,9 @@ def _resumo(txt, n=140):
 
 def _indice(campaign_id: str, mestre: bool) -> list:
     reveladas = _ja_reveladas(campaign_id)
+    desc = (supabase.table("descobertas").select("id, tipo, entidade_id")
+            .eq("campaign_id", campaign_id).is_("personagem_id", "null").execute().data or [])
+    did_de = {(d["tipo"], str(d["entidade_id"])): d["id"] for d in desc}
 
     def tabela(nome, campos, por_campanha=True):
         try:
@@ -538,10 +573,11 @@ def _indice(campaign_id: str, mestre: bool) -> list:
 
     def add(tipo, r, nome, sub="", resumo="", revelado=None):
         rev = (tipo, str(r["id"])) in reveladas if revelado is None else revelado
-        if not (mestre or rev):          # jogador só vê o revelado
+        if not (mestre or rev):
             return
         itens.append({"tipo": tipo, "id": r["id"], "nome": nome or "(sem nome)",
-                      "subtitulo": sub or "", "resumo": _resumo(resumo), "revelado": rev})
+                      "subtitulo": sub or "", "resumo": _resumo(resumo), "revelado": rev,
+                      "descoberta_id": did_de.get((tipo, str(r["id"])))})
 
     for r in tabela("regioes", "id, nome"):
         add("regiao", r, r.get("nome"), "Terra")
