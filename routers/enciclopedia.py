@@ -170,17 +170,17 @@ async def enciclopedia(campaign_id: str, user: dict = Depends(usuario_atual)):
         linhas = supabase.table(tabela).select("*").in_("id", ids).execute().data if ids else []
         saida[chave] = sorted((norm(r) for r in linhas), key=lambda x: (x["nome"] or "").lower())
 
-    pags = (supabase.table("TABELA_DA_WIKI")
-            .select("id, titulo, categoria, conteudo, entidade_tipo, entidade_id, updated_at")
+    pags = (supabase.table("wiki_paginas")
+            .select("id, titulo, categoria, conteudo, entidade_tipo, entidade_id")
             .eq("campaign_id", campaign_id).eq("revelada", True)
             .execute().data or [])
     saida["paginas"] = sorted(pags, key=lambda p: (p.get("titulo") or "").lower())
 
-    ALIAS = {"criatura": "monstro"}  # a Wiki usa "criatura", a enciclopédia usa "monstro"
+    ALIAS = {"criatura": "monstro"}
     ids_str = {t: {str(i) for i in ids} for t, ids in ids_por_tipo.items()}
 
     pags = (supabase.table("wiki_paginas")
-            .select("id, titulo, categoria, conteudo, entidade_tipo, entidade_id, updated_at")
+            .select("id, titulo, categoria, conteudo, entidade_tipo, entidade_id")
             .eq("campaign_id", campaign_id).eq("revelada", True)
             .execute().data or [])
 
