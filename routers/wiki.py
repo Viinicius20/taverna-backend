@@ -81,7 +81,7 @@ def deletar_pagina_wiki(wiki_id: str):
     supabase.table("wiki_paginas").delete().eq("id", wiki_id).execute()
     return {"ok": True}
 
-@router.post("/wiki/gerar-historia", dependencies=MESTRE)
+@router.post("/wiki/gerar-historia", dependencies=[Depends(exigir_mestre)])
 async def gerar_historia(req: GerarHistoriaIn):
     prompt = (
         f"Você ajuda um mestre de RPG de fantasia a escrever a página '{req.titulo}' "
