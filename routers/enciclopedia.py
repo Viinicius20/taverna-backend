@@ -549,7 +549,7 @@ def _indice(campaign_id: str, mestre: bool) -> list:
         add("npc", n, n.get("name"), (n.get("data") or {}).get("occupation", ""))
     for f in tabela("factions", "id, name, type"):
         add("faccao", f, f.get("name"), f.get("type") or "")
-    for b in tabela("bestiary", "id, name, cr, size, type, discovered"):
+    for b in tabela("bestiary", "id, name, cr, size, type, discovered", por_campanha=False):
         add("criatura", b, b.get("name"), f"CR {b.get('cr')} · {b.get('size') or ''} {b.get('type') or ''}".strip(),
             revelado=b.get("discovered") is not False)
 
@@ -581,7 +581,7 @@ def _detalhe(campaign_id: str, tipo: str, entidade_id: str, mestre: bool):
     if tipo not in TABELA_DE:
         raise HTTPException(status_code=400, detail="Tipo inválido")
     q = supabase.table(TABELA_DE[tipo]).select("*").eq("id", entidade_id)
-    if tipo != "criatura":
+    if tipo != "criatura":                      # bestiary não tem campaign_id
         q = q.eq("campaign_id", campaign_id)
     rows = q.execute().data or []
     if not rows:
@@ -594,20 +594,28 @@ def _detalhe(campaign_id: str, tipo: str, entidade_id: str, mestre: bool):
         if not visivel:
             raise HTTPException(status_code=404, detail="Entrada não encontrada")
 
-    data = row.get("data") if isinstance(row.get("data"), dict) else {}
+    # A terra não guarda texto: quem a descreve é o local ligado a ela (local_id)
+    fonte, defs = row, LORE[tipo]
+    if tipo == "regiao" and row.get("local_id"):
+        loc = (supabase.table("locations").select("*")
+               .eq("id", row["local_id"]).eq("campaign_id", campaign_id).execute().data or [])
+        if loc:
+            fonte, defs = loc[0], LORE["local"]
+
+    data = fonte.get("data") if isinstance(fonte.get("data"), dict) else {}
     campos, vistos = [], set()
-    for chave, rotulo, so_mestre in LORE[tipo]:
+    for chave, rotulo, so_mestre in defs:
         if so_mestre and not mestre:
             continue
-        texto = row.get(chave) or data.get(chave)
+        texto = fonte.get(chave) or data.get(chave)
         if isinstance(texto, str) and texto.strip() and chave not in vistos:
             vistos.add(chave)
             campos.append({"chave": chave, "rotulo": rotulo, "texto": texto.strip()})
 
     resp = {"tipo": tipo, "id": row["id"], "campos": campos}
     if mestre:
-        todas = {k for k, v in {**row, **data}.items() if isinstance(v, str) and v.strip()}
-        resp["outras_chaves"] = sorted(todas - {c[0] for c in LORE[tipo]} - {"id", "name", "nome", "campaign_id"})
+        todas = {k for k, v in {**fonte, **data}.items() if isinstance(v, str) and v.strip()}
+        resp["outras_chaves"] = sorted(todas - {c[0] for c in defs} - {"id", "name", "nome", "campaign_id"})
     return resp
 
 
