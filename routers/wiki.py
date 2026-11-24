@@ -1,8 +1,9 @@
 from datetime import datetime
 from typing import Optional
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from core import supabase
+from auth import exigir_mestre
 
 router = APIRouter(tags=["wiki"])
 
