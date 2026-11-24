@@ -468,7 +468,6 @@ def _ja_reveladas(campaign_id: str) -> set:
 
 @router.get("/descobertas-cadeia/{campaign_id}/{tipo}/{entidade_id}", dependencies=MESTRE)
 async def filhos_da_cadeia(campaign_id: str, tipo: str, entidade_id: str):
-    """O que pode ser revelado junto: terra -> locais dela; local -> NPCs que estão nele."""
     if tipo not in ("regiao", "local"):
         raise HTTPException(status_code=400, detail="tipo deve ser 'regiao' ou 'local'")
     reveladas = _ja_reveladas(campaign_id)
@@ -497,7 +496,6 @@ async def filhos_da_cadeia(campaign_id: str, tipo: str, entidade_id: str):
 
 @router.post("/descobertas-cadeia/{campaign_id}", dependencies=MESTRE)
 async def revelar_cadeia(campaign_id: str, body: CadeiaIn):
-    """Revela vários itens de uma vez (um único insert, então ou entra tudo ou nada)."""
     permitidos = {"local", "npc"}
     reveladas = _ja_reveladas(campaign_id)
     novos, vistos = [], set()
@@ -524,10 +522,12 @@ def _resumo(txt, n=140):
 def _indice(campaign_id: str, mestre: bool) -> list:
     reveladas = _ja_reveladas(campaign_id)
 
-    def tabela(nome, campos):
+    def tabela(nome, campos, por_campanha=True):
         try:
-            return (supabase.table(nome).select(campos)
-                    .eq("campaign_id", campaign_id).execute().data or [])
+            q = supabase.table(nome).select(campos)
+            if por_campanha:
+                q = q.eq("campaign_id", campaign_id)
+            return q.execute().data or []
         except Exception as e:
             print(f"[AVISO] Índice da wiki sem {nome}: {e}")
             return []
@@ -563,3 +563,59 @@ async def wiki_indice_mestre(campaign_id: str):
 @router.get("/wiki-indice/{campaign_id}/jogador")
 async def wiki_indice_jogador(campaign_id: str):
     return {"success": True, "data": _indice(campaign_id, False)}
+
+LORE = {
+    "regiao":   [("descricao", "Descrição", False), ("description", "Descrição", False)],
+    "local":    [("description", "Descrição", False), ("history", "História", False),
+                 ("lore", "Lore", False), ("quests", "Missões", True)],
+    "npc":      [("backstory", "História", False), ("history", "História", False),
+                 ("background", "Origem", False), ("description", "Descrição", False),
+                 ("appearance", "Aparência", False)],
+    "faccao":   [("description", "Descrição", False), ("history", "História", False)],
+    "criatura": [("description", "Descrição", False), ("lore", "Lore", False)],
+}
+TABELA_DE = {"regiao": "regioes", "local": "locations", "npc": "npcs",
+             "faccao": "factions", "criatura": "bestiary"}
+
+def _detalhe(campaign_id: str, tipo: str, entidade_id: str, mestre: bool):
+    if tipo not in TABELA_DE:
+        raise HTTPException(status_code=400, detail="Tipo inválido")
+    q = supabase.table(TABELA_DE[tipo]).select("*").eq("id", entidade_id)
+    if tipo != "criatura":
+        q = q.eq("campaign_id", campaign_id)
+    rows = q.execute().data or []
+    if not rows:
+        raise HTTPException(status_code=404, detail="Entrada não encontrada")
+    row = rows[0]
+
+    if not mestre:
+        visivel = (row.get("discovered") is not False) if tipo == "criatura" \
+            else (tipo, str(entidade_id)) in _ja_reveladas(campaign_id)
+        if not visivel:
+            raise HTTPException(status_code=404, detail="Entrada não encontrada")
+
+    data = row.get("data") if isinstance(row.get("data"), dict) else {}
+    campos, vistos = [], set()
+    for chave, rotulo, so_mestre in LORE[tipo]:
+        if so_mestre and not mestre:
+            continue
+        texto = row.get(chave) or data.get(chave)
+        if isinstance(texto, str) and texto.strip() and chave not in vistos:
+            vistos.add(chave)
+            campos.append({"chave": chave, "rotulo": rotulo, "texto": texto.strip()})
+
+    resp = {"tipo": tipo, "id": row["id"], "campos": campos}
+    if mestre:
+        todas = {k for k, v in {**row, **data}.items() if isinstance(v, str) and v.strip()}
+        resp["outras_chaves"] = sorted(todas - {c[0] for c in LORE[tipo]} - {"id", "name", "nome", "campaign_id"})
+    return resp
+
+
+@router.get("/wiki-entidade/{campaign_id}/{tipo}/{entidade_id}", dependencies=MESTRE)
+async def wiki_entidade_mestre(campaign_id: str, tipo: str, entidade_id: str):
+    return {"success": True, "data": _detalhe(campaign_id, tipo, entidade_id, True)}
+
+
+@router.get("/wiki-entidade/{campaign_id}/{tipo}/{entidade_id}/jogador")
+async def wiki_entidade_jogador(campaign_id: str, tipo: str, entidade_id: str):
+    return {"success": True, "data": _detalhe(campaign_id, tipo, entidade_id, False)}
