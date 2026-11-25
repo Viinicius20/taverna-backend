@@ -41,7 +41,6 @@ def _url_publica_mapa(nome: str) -> str:
 
 
 async def chamar_ia(prompt: str) -> str:
-    # funciona se gerar_texto_com_gemini for comum ou async
     resultado = gerar_texto_com_gemini(prompt)
     if inspect.isawaitable(resultado):
         resultado = await resultado
@@ -572,12 +571,13 @@ def _indice(campaign_id: str, mestre: bool) -> list:
     itens = []
 
     def add(tipo, r, nome, sub="", resumo="", revelado=None):
-        rev = (tipo, str(r["id"])) in reveladas if revelado is None else revelado
+        chave = "monstro" if tipo == "criatura" else tipo
+        rev = (chave, str(r["id"])) in reveladas if revelado is None else revelado
         if not (mestre or rev):
             return
         itens.append({"tipo": tipo, "id": r["id"], "nome": nome or "(sem nome)",
                       "subtitulo": sub or "", "resumo": _resumo(resumo), "revelado": rev,
-                      "descoberta_id": did_de.get((tipo, str(r["id"])))})
+                      "descoberta_id": did_de.get((chave, str(r["id"])))})
 
     for r in tabela("regioes", "id, nome"):
         add("regiao", r, r.get("nome"), "Terra")
@@ -587,9 +587,13 @@ def _indice(campaign_id: str, mestre: bool) -> list:
         add("npc", n, n.get("name"), (n.get("data") or {}).get("occupation", ""))
     for f in tabela("factions", "id, name, type"):
         add("faccao", f, f.get("name"), f.get("type") or "")
-    for b in tabela("bestiary", "id, name, cr, size, type, discovered", por_campanha=False):
-        add("criatura", b, b.get("name"), f"CR {b.get('cr')} · {b.get('size') or ''} {b.get('type') or ''}".strip(),
-            revelado=b.get("discovered") is not False)
+    for b in tabela("bestiary", "id, name, cr, size, type", por_campanha=False):
+        add("criatura", b, b.get("name"),
+            f"CR {b.get('cr')} · {b.get('size') or ''} {b.get('type') or ''}".strip(),
+            revelado=("monstro", str(b["id"])) in reveladas)
+    for i in tabela("magic_items", "id, name, type, rarity", por_campanha=False):
+        add("item", i, i.get("name"), " · ".join(x for x in [i.get("rarity"), i.get("type")] if x),
+            revelado=("item", str(i["id"])) in did_de)
 
     itens.sort(key=lambda x: x["nome"].lower())
     return itens
@@ -613,9 +617,10 @@ LORE = {
                  ("appearance", "Aparência", False)],
     "faccao":   [("description", "Descrição", False), ("history", "História", False)],
     "criatura": [("description", "Descrição", False), ("lore", "Lore", False)],
+    "item":     [("description", "Descrição", False)],
 }
 TABELA_DE = {"regiao": "regioes", "local": "locations", "npc": "npcs",
-             "faccao": "factions", "criatura": "bestiary"}
+             "faccao": "factions", "criatura": "bestiary", "item": "magic_items"}
 
 def _item(x):
     if isinstance(x, str):

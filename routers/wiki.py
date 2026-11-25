@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from core import supabase
 from auth import exigir_mestre
+from routers.enciclopedia import chamar_ia
 import re
 
 def limpar_links(texto, validos):
