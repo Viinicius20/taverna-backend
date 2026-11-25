@@ -165,18 +165,16 @@ async def enciclopedia(campaign_id: str, user: dict = Depends(usuario_atual)):
 
     saida = {}
     for tipo, (tabela, norm, chave) in TABELAS.items():
-        ids = list(ids_por_tipo.get(tipo, []))
-        linhas = supabase.table(tabela).select("*").in_("id", ids).execute().data if ids else []
+        if tipo == "monstro":
+            linhas = supabase.table("bestiary").select("*").eq("discovered", True).execute().data or []
+        else:
+            ids = list(ids_por_tipo.get(tipo, []))
+            linhas = supabase.table(tabela).select("*").in_("id", ids).execute().data if ids else []
         saida[chave] = sorted((norm(r) for r in linhas), key=lambda x: (x["nome"] or "").lower())
-
-    pags = (supabase.table("wiki_paginas")
-            .select("id, titulo, categoria, conteudo, entidade_tipo, entidade_id")
-            .eq("campaign_id", campaign_id).eq("revelada", True)
-            .execute().data or [])
-    saida["paginas"] = sorted(pags, key=lambda p: (p.get("titulo") or "").lower())
 
     ALIAS = {"criatura": "monstro"}
     ids_str = {t: {str(i) for i in ids} for t, ids in ids_por_tipo.items()}
+    ids_str["monstro"] = {str(m["id"]) for m in saida["monstros"]}
 
     pags = (supabase.table("wiki_paginas")
             .select("id, titulo, categoria, conteudo, entidade_tipo, entidade_id")
@@ -191,9 +189,6 @@ async def enciclopedia(campaign_id: str, user: dict = Depends(usuario_atual)):
         visiveis.append(p)
 
     saida["paginas"] = sorted(visiveis, key=lambda p: (p.get("titulo") or "").lower())
-
-    return {"success": True, "data": saida}
-
     return {"success": True, "data": saida}
 
 
@@ -587,10 +582,10 @@ def _indice(campaign_id: str, mestre: bool) -> list:
         add("npc", n, n.get("name"), (n.get("data") or {}).get("occupation", ""))
     for f in tabela("factions", "id, name, type"):
         add("faccao", f, f.get("name"), f.get("type") or "")
-    for b in tabela("bestiary", "id, name, cr, size, type", por_campanha=False):
+    for b in tabela("bestiary", "id, name, cr, size, type, discovered", por_campanha=False):
         add("criatura", b, b.get("name"),
             f"CR {b.get('cr')} · {b.get('size') or ''} {b.get('type') or ''}".strip(),
-            revelado=("monstro", str(b["id"])) in reveladas)
+            revelado=b.get("discovered") is True)
     for i in tabela("magic_items", "id, name, type, rarity", por_campanha=False):
         add("item", i, i.get("name"), " · ".join(x for x in [i.get("rarity"), i.get("type")] if x),
             revelado=("item", str(i["id"])) in did_de)
