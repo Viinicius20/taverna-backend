@@ -4,8 +4,7 @@ import time
 from typing import Optional
 from utils import estado_por_pontos
 from locais_util import indice_de_locais, normalizar_nome
-from relacoes import TIPO_REL, vinculos_brutos
-
+from routers.relacoes import TIPO_REL, vinculos_brutos
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
@@ -605,13 +604,12 @@ async def wiki_indice_jogador(campaign_id: str):
 
 LORE = {
     "regiao":   [("descricao", "Descrição", False), ("description", "Descrição", False)],
-    "local":  [("description", "Descrição", False), ("region_info", "Região", False),
-              ("commerce", "Comércio", False), ("language", "Idioma", False),
-              ("monsters", "Monstros e perigos", True), ("quests", "Ideias de quest", True),
-              ("boss", "Ameaça principal", True)],
-    "npc":      [("backstory", "História", False), ("history", "História", False),
-                 ("background", "Origem", False), ("description", "Descrição", False),
-                 ("appearance", "Aparência", False)],
+    "local":    [("description", "Descrição", False), ("region_info", "Região", False),
+                ("commerce", "Comércio", False), ("language", "Idioma", False),
+                ("monsters", "Monstros e perigos", True), ("quests", "Ideias de quest", True),
+                ("boss", "Ameaça principal", True)],
+    "npc":      [("background_story", "História", True), ("personality", "Personalidade", False),
+                ("motivation", "Motivação", True), ("appearance", "Aparência", False)],
     "faccao":   [("description", "Descrição", False), ("history", "História", False)],
     "criatura": [("description", "Descrição", False), ("lore", "Lore", False)],
     "item":     [("description", "Descrição", False)],
