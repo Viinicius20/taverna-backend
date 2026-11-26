@@ -6,6 +6,8 @@ import string
 import tempfile
 import urllib.parse
 import time
+import re
+import unicodedata
 from historico import registrar_alteracoes
 from servicos import ajustar_reputacao, propagar_consequencias_evento
 from ia import gerar_texto_com_gemini, gerar_json_com_gemini
@@ -36,10 +38,6 @@ from boatos_reputacao import pressoes_de_reputacao, fama_dos_personagens
 
 VELOCIDADE_KM_DIA = 40
 CHANCE_EVENTO_POR_DIA = 0.35
-
-_cache_monstro = {"ate": 0.0, "dado": None}
-CACHE_MONSTRO_SEGUNDOS = 600
-
 
 REPUTACOES = {"aliada", "neutra", "hostil"}
 
@@ -2135,42 +2133,113 @@ async def enviar_push_notification(user_id: str, titulo: str, mensagem: str):
         print(f"Erro no push notification: {str(e)}")
 
 
-@app.get("/bestiary/random-description", dependencies=[Depends(usuario_atual)])
+def normalizar_ameaca(texto):
+    texto = unicodedata.normalize("NFKD", str(texto or "").lower())
+    texto = "".join(c for c in texto if not unicodedata.combining(c))
+    return " ".join(re.findall(r"[a-z0-9]+", texto))
+
+
+def combina_com_local(monstro, texto_local):
+    nome = normalizar_ameaca(monstro.get("name"))
+    tipo = normalizar_ameaca(monstro.get("type"))
+    palavras = set(texto_local.split())
+
+    # Nome inteiro, sem confundir partes de palavras.
+    if nome and f" {nome} " in f" {texto_local} ":
+        return True
+
+    if tipo in {"construct", "constructo", "construto"}:
+        if palavras & {"constructo", "constructos", "construto", "construtos"}:
+            return True
+
+    if tipo == "elemental" and palavras & {"elemental", "elementais"}:
+        return True
+
+    if "golem" in nome.split() and palavras & {"golem", "golens", "golems"}:
+        return True
+
+    return False
+
+@app.get("/bestiary/random-description")
 @limiter.limit("12/minute")
-def bestiary_random_description(request: Request, novo: bool = False):
-    agora = time.time()
-    if not novo and _cache_monstro["dado"] and _cache_monstro["ate"] > agora:
-        return _cache_monstro["dado"]
-    try:
-        res = supabase.table("bestiary").select("name, type, cr, description").execute()
-        if not res.data:
-            raise HTTPException(404, "Nenhum monstro encontrado")
+def bestiary_random_description(
+    request: Request,
+    novo: bool = False,
+    anterior: str | None = None,
+    user: dict = Depends(usuario_atual),
+):
+    campanha = campanha_atual()
+    campanhas = (
+        supabase.table("campaigns").select("local_grupo_id")
+        .eq("id", campanha).limit(1).execute().data or []
+    )
+    local_id = campanhas[0].get("local_grupo_id") if campanhas else None
 
-        anterior = ((_cache_monstro["dado"] or {}).get("data") or {}).get("nome")
-        candidatos = [m for m in res.data if m["name"] != anterior] or res.data
-        monstro = random.choice(candidatos)
+    if not local_id:
+        return {"success": True, "data": None, "motivo": "sem_local"}
 
-        prompt = f"""Você é um narrador de RPG de fantasia sombria.
-        Escreva uma descrição atmosférica e ameaçadora de 3 a 4 frases sobre o monstro "{monstro['name']}" (tipo: {monstro['type']}, CR {monstro['cr']}).
-        Foque na aparência, presença e o que os aventureiros sentem ao se deparar com ele.
-        Não mencione stats ou números. Escreva em português.
-        Responda APENAS com a descrição, sem título ou introdução."""
+    locais = (
+        supabase.table("locations").select("monsters")
+        .eq("id", local_id).eq("campaign_id", campanha)
+        .limit(1).execute().data or []
+    )
+    texto_local = normalizar_ameaca(locais[0].get("monsters")) if locais else ""
 
-        descricao = limpar_texto(gerar_texto_com_gemini(prompt))
+    if not texto_local:
+        return {"success": True, "data": None, "motivo": "sem_perigos"}
 
-        resposta = {"success": True, "data": {
-            "nome": monstro["name"],
-            "tipo": monstro["type"],
-            "cr": monstro["cr"],
-            "descricao": descricao,
-        }}
-        _cache_monstro.update(ate=agora + CACHE_MONSTRO_SEGUNDOS, dado=resposta)
-        return resposta
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"ERRO DESCRICAO ALEATORIA: {e}")
-        raise HTTPException(500, "Erro ao gerar descrição")
+    consulta = (
+        supabase.table("bestiary")
+        .select("id,name,type,cr,description,hp,attributes")
+        .eq("discovered", True)
+        .order("id")
+    )
+
+    candidatos = []
+    tamanho_pagina = 500
+    inicio = 0
+
+    while True:
+        pagina = consulta.range(inicio, inicio + tamanho_pagina - 1).execute().data or []
+        candidatos.extend(
+            m for m in pagina
+            if (m.get("description") or "").strip()
+            and combina_com_local(m, texto_local)
+        )
+        if len(pagina) < tamanho_pagina:
+            break
+        inicio += tamanho_pagina
+
+    if not candidatos:
+        return {"success": True, "data": None, "motivo": "sem_criatura_revelada"}
+
+    if novo:
+        outros = [m for m in candidatos if str(m["id"]) != anterior]
+        monstro = random.choice(outros or candidatos)
+    else:
+        calendario = (
+            supabase.table("calendario").select("dia_total")
+            .eq("campaign_id", campanha).limit(1).execute().data or []
+        )
+        dia = calendario[0].get("dia_total", 0) if calendario else 0
+        monstro = random.Random(f"{campanha}:{local_id}:{dia}").choice(candidatos)
+
+    data = {
+        "id": monstro["id"],
+        "nome": monstro["name"],
+        "tipo": monstro["type"],
+        "cr": monstro["cr"],
+        "descricao": monstro["description"],
+        "tem_outra": len(candidatos) > 1,
+    }
+
+    if user.get("role") == "mestre" and monstro.get("hp"):
+        data["combate"] = {
+            "hp": monstro["hp"],
+            "dex": (monstro.get("attributes") or {}).get("dex", 10),
+        }
+
+    return {"success": True, "data": data}
 
 @app.post("/aplicar-asi", dependencies=[Depends(usuario_atual)])
 @limiter.limit("10/minute")
