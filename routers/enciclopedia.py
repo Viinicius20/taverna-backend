@@ -5,11 +5,13 @@ from typing import Optional
 from utils import estado_por_pontos
 from locais_util import indice_de_locais, normalizar_nome
 from routers.relacoes import TIPO_REL, vinculos_brutos
+from routers.npc_notas import NotasReq, gravar as gravar_nota_npc
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
 from auth import MESTRE, usuario_atual
-from core import supabase
+from core import supabase, campanha_atual
 from ia import gerar_texto_com_gemini
+from uuid import UUID
 import json
 import re
 import random
@@ -196,12 +198,86 @@ async def enciclopedia(campaign_id: str, user: dict = Depends(usuario_atual)):
 
 # ---------- atlas ----------
 
-def _npcs_por_local(campaign_id: str, indice: dict, npcs_ok=None) -> dict:
+class VinculoPinIn(BaseModel):
+    local_id: UUID | None = None
+
+
+class DescobertaLendaIn(BaseModel):
+    descoberta: bool
+
+
+def local_do_pin(local_id: UUID, campanha: str):
+    linhas = (
+        supabase.table("locations").select("id,name")
+        .eq("campaign_id", campanha).eq("id", str(local_id))
+        .limit(1).execute().data or []
+    )
+    if not linhas:
+        raise HTTPException(404, "Local não encontrado nesta campanha.")
+    return linhas[0]
+
+
+@router.patch("/atlas/npcs/{npc_id}/local", dependencies=MESTRE)
+def vincular_npc_ao_pin(npc_id: UUID, body: VinculoPinIn):
+    campanha = campanha_atual()
+    npc = (
+        supabase.table("npcs").select("id")
+        .eq("campaign_id", campanha).eq("id", str(npc_id))
+        .limit(1).execute().data or []
+    )
+    if not npc:
+        raise HTTPException(404, "NPC não encontrado nesta campanha.")
+
+    local = local_do_pin(body.local_id, campanha) if body.local_id else None
+
+    # Mantém o nome usado nas notas e grava o ID para o Atlas.
+    return gravar_nota_npc(campanha, str(npc_id), NotasReq(notas={
+        "atlas_location_id": str(local["id"]) if local else "",
+        "location": local["name"] if local else "",
+    }))
+
+
+@router.patch("/atlas/lendas/{lenda_id}/local", dependencies=MESTRE)
+def vincular_lenda_ao_pin(lenda_id: UUID, body: VinculoPinIn):
+    campanha = campanha_atual()
+    if body.local_id:
+        local_do_pin(body.local_id, campanha)
+
+    linhas = (
+        supabase.table("lendas")
+        .update({"local_id": str(body.local_id) if body.local_id else None})
+        .eq("campaign_id", campanha).eq("id", str(lenda_id))
+        .execute().data
+    )
+    if not linhas:
+        raise HTTPException(404, "Lenda não encontrada nesta campanha.")
+    return {"success": True}
+
+
+@router.patch("/atlas/lendas/{lenda_id}/descoberta", dependencies=MESTRE)
+def marcar_descoberta_lenda(lenda_id: UUID, body: DescobertaLendaIn):
+    linhas = (
+        supabase.table("lendas").update({"descoberta": body.descoberta})
+        .eq("campaign_id", campanha_atual()).eq("id", str(lenda_id))
+        .execute().data
+    )
+    if not linhas:
+        raise HTTPException(404, "Lenda não encontrada nesta campanha.")
+    return {"success": True}
+
+def _npcs_por_local(campaign_id: str, indice: dict, npcs_ok=None, locais_validos=None) -> dict:
     linhas = (supabase.table("npc_notas").select("npc_id, notas")
               .eq("campaign_id", campaign_id).execute().data or [])
     ids_por_local = {}
     for l in linhas:
-        lid = indice.get(normalizar_nome((l.get("notas") or {}).get("location") or ""))
+        notas = l.get("notas") or {}
+        if "atlas_location_id" in notas:
+            lid = notas["atlas_location_id"]
+        else:
+            lid = indice.get(normalizar_nome(notas.get("location") or ""))
+
+        if lid and locais_validos is not None and str(lid) not in locais_validos:
+            continue
         if not lid:
             continue
         if npcs_ok is not None and str(l["npc_id"]) not in npcs_ok:
@@ -211,7 +287,11 @@ def _npcs_por_local(campaign_id: str, indice: dict, npcs_ok=None) -> dict:
     todos = list({i for ids in ids_por_local.values() for i in ids})
     nomes = {}
     if todos:
-        for c in supabase.table("npcs").select("id, name").in_("id", todos).execute().data or []:
+        consulta = (
+            supabase.table("npcs").select("id,name")
+            .eq("campaign_id", campaign_id).in_("id", todos)
+        )
+        for c in consulta.execute().data or []:
             nomes[str(c["id"])] = c["name"]
 
     return {
@@ -264,16 +344,60 @@ def _montar_atlas(campaign_id: str, locais_ok=None, regioes_ok=None, npcs_ok=Non
     locais = supabase.table("locations").select("*").eq("campaign_id", campaign_id).execute().data
     regioes = supabase.table("regioes").select("*").eq("campaign_id", campaign_id).execute().data
     por_id = {str(r["id"]): r for r in locais}
-    por_local = _npcs_por_local(campaign_id, indice_de_locais(locais), npcs_ok)
+    por_local = _npcs_por_local(
+        campaign_id, indice_de_locais(locais), npcs_ok, set(por_id),
+    )
+
+    visao_mestre = locais_ok is None
+    lendas_por_local = {}
+
+    lendas_locais = (
+            supabase.table("lendas")
+            .select("id,local_id,titulo,versao_popular,ativa,descoberta")
+            .eq("campaign_id", campaign_id)
+            .not_.is_("local_id", "null")
+            .order("titulo").execute().data or []
+    )
+
+    for lenda in lendas_locais:
+        lendas_por_local.setdefault(str(lenda["local_id"]), []).append(lenda)
+
+    def dados_lendas(local_id):
+        vinculadas = lendas_por_local.get(str(local_id), [])
+        visiveis = [
+            lenda for lenda in vinculadas
+            if visao_mestre or (lenda["ativa"] and lenda["descoberta"])
+        ]
+        return {
+            "tem_lenda_pendente": any(
+                lenda["ativa"] and not lenda["descoberta"] for lenda in vinculadas
+            ),
+            "lendas": [
+                {
+                    "id": lenda["id"],
+                    "titulo": lenda["titulo"],
+                    "versao_popular": lenda["versao_popular"],
+                    "ativa": lenda["ativa"],
+                    "descoberta": lenda["descoberta"],
+                }
+                for lenda in visiveis
+            ],
+        }
 
     def faccao_visivel(r):
         fid = r.get("faction_id")
         return str(fid) if fid and (faccoes_ok is None or str(fid) in faccoes_ok) else None
 
     pins = [
-        {**_norm_local(r), "x": r.get("pin_x"), "y": r.get("pin_y"), "regiao_id": r.get("regiao_id"),
-                  "npcs": por_local.get(str(r["id"]), []),
-         "faccao_id": faccao_visivel(r)}
+        {
+            **_norm_local(r),
+            **dados_lendas(r["id"]),
+            "x": r.get("pin_x"),
+            "y": r.get("pin_y"),
+            "regiao_id": r.get("regiao_id"),
+            "npcs": por_local.get(str(r["id"]), []),
+            "faccao_id": faccao_visivel(r),
+        }
         for r in locais
         if locais_ok is None or str(r["id"]) in locais_ok
     ]
@@ -310,15 +434,44 @@ def _montar_atlas(campaign_id: str, locais_ok=None, regioes_ok=None, npcs_ok=Non
 
 @router.get("/atlas/{campaign_id}")
 async def atlas(campaign_id: str, user: dict = Depends(usuario_atual)):
+    if campaign_id != campanha_atual():
+        raise HTTPException(404, "Campanha não encontrada.")
+
     rev = _ids_descobertos(campaign_id, user)
+    npcs_do_grupo = {
+        entidade_id for tipo, entidade_id in _ja_reveladas(campaign_id)
+        if tipo == "npc"
+    }
+
     return {"success": True, "data": _montar_atlas(
-        campaign_id, rev.get("local", set()), rev.get("regiao", set()), rev.get("npc", set()),
-        rev.get("faccao", set()), rev.get("segredo", set()))}
+        campaign_id,
+        rev.get("local", set()),
+        rev.get("regiao", set()),
+        npcs_do_grupo,
+        rev.get("faccao", set()),
+        rev.get("segredo", set()),
+    )}
 
 
 @router.get("/atlas-mestre/{campaign_id}", dependencies=MESTRE)
 async def atlas_mestre(campaign_id: str):
-    return {"success": True, "data": _montar_atlas(campaign_id)}
+    if campaign_id != campanha_atual():
+        raise HTTPException(404, "Campanha não encontrada.")
+
+    rev = _ids_descobertos(campaign_id, user)
+    npcs_do_grupo = {
+        entidade_id for tipo, entidade_id in _ja_reveladas(campaign_id)
+        if tipo == "npc"
+    }
+
+    return {"success": True, "data": _montar_atlas(
+        campaign_id,
+        rev.get("local", set()),
+        rev.get("regiao", set()),
+        npcs_do_grupo,
+        rev.get("faccao", set()),
+        rev.get("segredo", set()),
+    )}
 
 
 @router.post("/mapa/{campaign_id}", dependencies=MESTRE)
