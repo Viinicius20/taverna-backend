@@ -4,7 +4,7 @@ import time
 from typing import Optional
 from utils import estado_por_pontos
 from locais_util import indice_de_locais, normalizar_nome
-from relacoes import TIPO_REL, vinculos_brutos
+from routers.relacoes import TIPO_REL, vinculos_brutos
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
