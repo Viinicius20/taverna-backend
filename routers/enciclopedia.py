@@ -4,6 +4,7 @@ import time
 from typing import Optional
 from utils import estado_por_pontos
 from locais_util import indice_de_locais, normalizar_nome
+from relacoes import TIPO_REL, vinculos_brutos
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
@@ -19,7 +20,8 @@ router = APIRouter()
 NPC_LOCAL_KEY = "location_id"
 COL_TITULO = "titulo"
 COL_TEXTO = "descricao"
-
+TIPO_WIKI = {v: k for k, v in TIPO_REL.items()}
+NOTA_PARA_JOGADOR = False
 
 # ---------- utilidades ----------
 
@@ -657,6 +659,35 @@ def _normalizar(valor):
         return ("itens", itens) if itens else None
     return None
 
+def _vinculos_wiki(campaign_id: str, tipo: str, entidade_id: str, mestre: bool):
+    rel = TIPO_REL.get(tipo)
+    if not rel:
+        return []
+    try:
+        brutos = vinculos_brutos(campaign_id, rel, entidade_id)
+    except Exception as e:
+        print(f"[AVISO] Vínculos da ficha indisponíveis: {e}")
+        return []
+    reveladas = None if mestre else _ja_reveladas(campaign_id)
+    saida = []
+    for v in brutos:
+        tipo_wiki = TIPO_WIKI.get(v["outro_tipo"])
+        if not mestre:
+            if v["secreto"]:
+                continue
+            if tipo_wiki and (tipo_wiki, v["outro_id"]) not in reveladas:
+                continue  # NPC ou local do outro lado ainda oculto
+            if not tipo_wiki and v["outro_tipo"] != "character":
+                continue
+        saida.append({
+            "id": v["id"], "kind": v["kind"], "direcao": v["direcao"],
+            "nota": v["nota"] if (mestre or NOTA_PARA_JOGADOR) else "",
+            "secreto": v["secreto"],
+            "outro": {"tipo": v["outro_tipo"], "tipo_wiki": tipo_wiki,
+                      "id": v["outro_id"], "nome": v["nome"]},
+        })
+    return saida
+
 def _detalhe(campaign_id: str, tipo: str, entidade_id: str, mestre: bool):
     if tipo not in TABELA_DE:
         raise HTTPException(status_code=400, detail="Tipo inválido")
@@ -702,6 +733,7 @@ def _detalhe(campaign_id: str, tipo: str, entidade_id: str, mestre: bool):
     if mestre:
         todas = {k for k, v in {**fonte, **data}.items() if isinstance(v, str) and v.strip()}
         resp["outras_chaves"] = sorted(todas - {c[0] for c in defs} - {"id", "name", "nome", "campaign_id"})
+        resp["vinculos"] = _vinculos_wiki(campaign_id, tipo, entidade_id, mestre)
     return resp
 
 
