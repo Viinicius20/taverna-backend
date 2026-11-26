@@ -26,7 +26,7 @@ from datetime import datetime
 from utils import limpar_texto
 from utils import MAXIMO
 from core import supabase, campanha_atual, limiter
-from routers import wiki, fatos, diario, tv, mundo_vivo, mundo_fisico, extras, publica, cofre, calendario, prazos, relacoes, npc_notas, sessao_zero, health, rolagens, tesouro, enciclopedia, lendas, faccao_notas, faccoes_atlas, bestiario_fotos
+from routers import wiki, fatos, diario, tv, mundo_vivo, mundo_fisico, extras, publica, cofre, calendario, prazos, relacoes, npc_notas, sessao_zero, health, rolagens, tesouro, enciclopedia, lendas, faccao_notas, faccoes_atlas, bestiario_fotos, rumores
 from auth import confere_senha, criar_token, hash_senha, exigir_mestre, MESTRE, usuario_atual, usuario_opcional, dono_ou_mestre, dono_da_lista, checar_campanha
 from servicos import ocultar_cofre
 from core import _campanha_ctx, CAMPANHA_PADRAO, UUID_RE
@@ -182,6 +182,7 @@ app.include_router(lendas.router)
 app.include_router(faccao_notas.router)
 app.include_router(faccoes_atlas.router)
 app.include_router(bestiario_fotos.router)
+app.include_router(rumores.router)
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 MODELOS_GEMINI = ["gemini-2.5-flash", "gemini-3.6-flash"]
@@ -931,7 +932,9 @@ async def get_sessions(campaign_id: str):
     except Exception as e:
         raise HTTPException(500, f"Erro ao buscar sessões: {str(e)}")
 
-def produzir_boato(nivel: Optional[str] = None) -> dict:
+def produzir_boato(nivel: Optional[str] = None, user: Optional[dict] = None) -> dict:
+    campanha = campanha_atual()
+    local_id = rumores.local_atual(campanha)
     eventos_ativos = supabase.table("world_events").select("name, description, progress") \
         .eq("campaign_id", campanha_atual()).eq("status", "ativo").execute().data
     eventos_concluidos = supabase.table("world_events").select("name, consequences") \
@@ -940,10 +943,17 @@ def produzir_boato(nivel: Optional[str] = None) -> dict:
         .eq("campaign_id", campanha_atual()).eq("value", True).execute().data
 
     try:
-        lendas = supabase.table("lendas").select("*") \
-                     .eq("campaign_id", campanha_atual()).eq("ativa", True).execute().data or []
+        consulta_lendas = (
+            supabase.table("lendas")
+            .select("id,titulo,versao_popular,distorcao,ultimo_boato")
+            .eq("campaign_id", campanha).eq("ativa", True)
+        )
+        lendas_ativas = rumores.filtrar_local(consulta_lendas, local_id).execute().data or []
+        lendas_ativas = [
+            lenda for lenda in lendas_ativas if (lenda.get("versao_popular") or "").strip()
+        ]
     except Exception:
-        lendas = []  # se a tabela ainda não existir, o boato sai como antes
+        lendas = []
 
     candidatos = (
             [f"o evento em andamento \"{e['name']}\" ({e['progress']}%): {e.get('description') or ''}" for e in
@@ -956,7 +966,21 @@ def produzir_boato(nivel: Optional[str] = None) -> dict:
 
 
     # 40% das vezes, havendo lendas ativas, o boato nasce de uma lenda
-    lenda = random.choice(lendas) if lendas and random.random() < 0.4 else None
+    lenda = None
+    if nivel != "falso" and random.random() < 0.4:
+        entradas = [
+            *(("lenda", item) for item in lendas_ativas),
+            *(("rumor", item) for item in rumores.candidatos_rumores(campanha, local_id, user)),
+        ]
+        if entradas:
+            origem, item = random.choice(entradas)
+            if origem == "rumor":
+                fala = {"boato": item["texto"], "fonte": item["fonte"]}
+                return {
+                    "success": True,
+                    "data": rumores.guardar_fala(fala, user, local_id, item),
+                }
+            lenda = item
     pressoes = [] if lenda else pressoes_de_reputacao(campanha_atual())
     pressao = random.choice(pressoes) if pressoes and random.random() < 0.35 else None
 
@@ -975,8 +999,6 @@ def produzir_boato(nivel: Optional[str] = None) -> dict:
         atual = (lenda.get("ultimo_boato") or "").strip()
         direcao = (
             f"O boato é sobre a lenda local \"{lenda['titulo']}\".\n"
-            f"O que realmente aconteceu (SÓ PARA VOCÊ SABER; nunca conte isso diretamente nem confirme): "
-            f"{(lenda.get('verdade') or 'não informado')}\n"
             f"O que o povo costuma dizer: {(lenda.get('versao_popular') or 'não informado')}\n"
         )
         if atual:
@@ -1076,6 +1098,7 @@ def produzir_boato(nivel: Optional[str] = None) -> dict:
         except Exception as log_error:
             print(f"[AVISO] Falha ao registrar evento de sessão: {log_error}")
 
+        rumores.guardar_fala(boato_data, user, local_id)
         return {"success": True, "data": boato_data}
     except Exception as e:
         print(f"ERRO BOATO: {e}")
@@ -1083,8 +1106,12 @@ def produzir_boato(nivel: Optional[str] = None) -> dict:
 
 @app.get("/boato")
 @limiter.limit("10/minute")
-def gerar_boato(request: Request):
-    return produzir_boato()
+def gerar_boato(request: Request, user: Optional[dict] = Depends(usuario_opcional)):
+    resultado = produzir_boato(user=user)
+    if not user or user.get("role") != "mestre":
+        for chave in ("falso", "distorcido", "distorcao"):
+            resultado["data"].pop(chave, None)
+    return resultado
 
 PERICIAS_BOATO = {"investigation": "int", "persuasion": "cha", "insight": "wis"}   # perícia -> atributo
 
@@ -1123,7 +1150,7 @@ def ouvir_boato(request: Request, character_id: str, pericia: str = "investigati
     else:
         nivel = "turvo"
 
-    resultado = produzir_boato(nivel)
+    resultado = produzir_boato(nivel, user=user)
     resultado["data"]["rolagem"] = {"pericia": pericia, "d20": d20, "bonus": bonus, "total": total}
     if user.get("role") == "mestre":
         resultado["data"]["nivel"] = nivel
