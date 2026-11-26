@@ -7,12 +7,13 @@ from locais_util import indice_de_locais, normalizar_nome
 from routers.relacoes import TIPO_REL, vinculos_brutos
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
-
 from auth import MESTRE, usuario_atual
 from core import supabase
 from ia import gerar_texto_com_gemini
 import json
 import re
+import random
+import unicodedata
 
 router = APIRouter()
 
@@ -743,3 +744,67 @@ async def wiki_entidade_mestre(campaign_id: str, tipo: str, entidade_id: str):
 @router.get("/wiki-entidade/{campaign_id}/{tipo}/{entidade_id}/jogador")
 async def wiki_entidade_jogador(campaign_id: str, tipo: str, entidade_id: str):
     return {"success": True, "data": _detalhe(campaign_id, tipo, entidade_id, False)}
+
+
+import random
+import unicodedata
+
+
+def _radicais(texto: str) -> str:
+    """Normaliza (sem acento, minúsculo) e tira o 's' final: 'Lobos' casa com 'Lobo'."""
+    s = unicodedata.normalize("NFD", texto or "").encode("ascii", "ignore").decode().lower()
+    palavras = re.findall(r"[a-z0-9]+", s)
+    return " " + " ".join(p[:-1] if len(p) > 3 and p.endswith("s") else p for p in palavras) + " "
+
+
+def _cr_num(valor) -> float:
+    try:
+        s = str(valor).strip()
+        if "/" in s:
+            a, b = s.split("/", 1)
+            return float(a) / float(b)
+        return float(s)
+    except Exception:
+        return 0.0
+
+
+def _nivel_medio(txt) -> float:
+    nums = [float(n) for n in re.findall(r"\d+", str(txt or ""))]
+    return sum(nums) / len(nums) if nums else 3.0
+
+
+@router.get("/encontro-local/{campaign_id}/{local_id}", dependencies=MESTRE)
+async def encontro_do_local(campaign_id: str, local_id: str):
+    rows = (supabase.table("locations").select("*").eq("id", local_id)
+            .eq("campaign_id", campaign_id).execute().data or [])
+    if not rows:
+        raise HTTPException(status_code=404, detail="Local não encontrado")
+    local = rows[0]
+
+    perigos = local.get("monsters") or ""
+    if not isinstance(perigos, str):
+        perigos = json.dumps(perigos, ensure_ascii=False)
+
+    bestiario = supabase.table("bestiary").select("*").execute().data or []
+    if not bestiario:
+        raise HTTPException(status_code=404, detail="O bestiário está vazio")
+
+    alvo = _radicais(perigos)
+    citadas = [c for c in bestiario if c.get("name") and _radicais(c["name"]) in alvo]
+
+    if citadas:
+        origem, pool = "citada", citadas
+    else:
+        nivel = _nivel_medio(local.get("avg_level"))
+        pool = [c for c in bestiario if nivel / 4 <= _cr_num(c.get("cr")) <= nivel] or bestiario
+        origem = "nivel"
+
+    c = random.choice(pool)
+    qtd = random.randint(2, 4) if _cr_num(c.get("cr")) <= 1 else random.randint(1, 2)
+
+    return {"success": True, "data": {
+        "local": local.get("name"), "origem": origem, "opcoes": len(pool), "qtd": qtd,
+        "criatura": {"id": c["id"], "name": c.get("name"), "cr": c.get("cr"),
+                     "hp": c.get("hp"), "ac": c.get("ac"),
+                     "dex": (c.get("attributes") or {}).get("dex")},
+    }}
