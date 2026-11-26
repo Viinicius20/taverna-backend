@@ -458,20 +458,7 @@ async def atlas_mestre(campaign_id: str):
     if campaign_id != campanha_atual():
         raise HTTPException(404, "Campanha não encontrada.")
 
-    rev = _ids_descobertos(campaign_id, user)
-    npcs_do_grupo = {
-        entidade_id for tipo, entidade_id in _ja_reveladas(campaign_id)
-        if tipo == "npc"
-    }
-
-    return {"success": True, "data": _montar_atlas(
-        campaign_id,
-        rev.get("local", set()),
-        rev.get("regiao", set()),
-        npcs_do_grupo,
-        rev.get("faccao", set()),
-        rev.get("segredo", set()),
-    )}
+    return {"success": True, "data": _montar_atlas(campaign_id)}
 
 
 @router.post("/mapa/{campaign_id}", dependencies=MESTRE)
