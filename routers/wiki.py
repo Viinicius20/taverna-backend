@@ -91,7 +91,8 @@ async def gerar_historia(req: GerarHistoriaIn):
         + (f"Texto atual, para continuar e manter coerente: {req.texto_atual[:3000]}. " if req.texto_atual else "")
         + (f"Quando citar algo destas entradas, escreva [[Título]] exatamente assim: "
            f"{', '.join(req.titulos_existentes[:80])}. " if req.titulos_existentes else "")
-        + "Escreva 2 a 4 parágrafos em português do Brasil. Responda só com o texto, sem título nem markdown."
+        + "Escreva 2 a 4 parágrafos em português do Brasil, usando [[links]] com moderação (no máximo 6) e só quando "
+          "a entrada for realmente relevante para a história. Responda só com o texto, sem título nem markdown."
     )
     texto = await chamar_ia(prompt)
     return {"success": True, "texto": limpar_links(texto.strip(), req.titulos_existentes)}
