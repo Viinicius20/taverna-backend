@@ -131,6 +131,14 @@ def anotar_fala(fala_id: UUID, user: dict = Depends(usuario_atual)):
             raise HTTPException(404, "Fala não encontrada.")
     return {"success": True}
 
+@router.delete("/rumores/mural/{fala_id}", dependencies=[Depends(exigir_mestre)])
+def remover_fala_mural(fala_id: UUID):
+    supabase.table("rumores_mural").delete() \
+        .eq("campaign_id", campanha_atual()) \
+        .eq("id", str(fala_id)) \
+        .not_.is_("anotado_em", "null").execute()
+
+    return {"success": True}
 
 @router.get("/rumores/sugestao")
 def consultar_intervalo(user: dict = Depends(usuario_atual)):
