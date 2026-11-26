@@ -1,11 +1,12 @@
 from typing import Optional
-
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-
+from typing import Literal
+from uuid import UUID
 from auth import exigir_mestre, usuario_atual
 from core import supabase, campanha_atual
-from moedas import MOEDAS, aplicar_delta
+from moedas import MOEDAS
+from postgrest.exceptions import APIError
 
 router = APIRouter(prefix="/tesouro", tags=["tesouro"])
 
@@ -31,6 +32,20 @@ class MoedasReq(BaseModel):
     ouro: int = Field(default=0, ge=-1_000_000, le=1_000_000)
     platina: int = Field(default=0, ge=-1_000_000, le=1_000_000)
 
+class DivisaoReq(BaseModel):
+    moeda: Literal["cobre", "prata", "electro", "ouro"]
+    valor: int = Field(ge=1, le=10_000_000)
+    personagens: list[UUID] = Field(min_length=1)
+    operacao_id: UUID
+
+
+class EntregaReq(BaseModel):
+    item: UUID
+    personagem: UUID
+    quantidade: int = Field(ge=1, le=9999)
+    operacao_id: UUID
+
+
 
 @router.get("")
 def ver_tesouro(user: dict = Depends(usuario_atual)):
@@ -39,6 +54,13 @@ def ver_tesouro(user: dict = Depends(usuario_atual)):
         itens = (supabase.table("tesouro").select("*").eq("campaign_id", camp)
                  .order("created_at", desc=True).execute().data or [])
         m = supabase.table("tesouro_moedas").select("*").eq("campaign_id", camp).limit(1).execute().data
+        historico = (
+            supabase.table("tesouro_historico")
+            .select("id,dia_total,descricao")
+            .eq("campaign_id", camp)
+            .order("criado_em", desc=True)
+            .limit(100).execute().data or []
+        )
     except Exception as e:
         print(f"ERRO TESOURO: {e}")
         raise HTTPException(500, "Erro ao buscar o tesouro")
@@ -46,22 +68,38 @@ def ver_tesouro(user: dict = Depends(usuario_atual)):
     return {"success": True, "data": {
         "itens": itens,
         "moedas": {k: atual.get(k, 0) for k in MOEDAS},
+        "historico": historico,
     }}
 
+def movimentar(acao, dados, operacao=None):
+    try:
+        return supabase.rpc("tesouro_movimentar", {
+            "p_campanha": campanha_atual(),
+            "p_acao": acao,
+            "p_dados": dados,
+            "p_operacao": str(operacao) if operacao else None,
+        }).execute().data
+    except APIError as e:
+        if e.code in {"PT400", "PT404", "PT409"}:
+            raise HTTPException(int(e.code[2:]), e.message) from e
+        raise HTTPException(500, "Erro ao movimentar o tesouro.") from e
 
-# precisa vir ANTES de /{item_id}, senão "moedas" seria lido como um id
+
 @router.patch("/moedas")
 def ajustar_moedas(req: MoedasReq, user: dict = Depends(exigir_mestre)):
-    camp = campanha_atual()
-    try:
-        m = supabase.table("tesouro_moedas").select("*").eq("campaign_id", camp).limit(1).execute().data
-        novo = aplicar_delta(m[0] if m else {}, req.model_dump())
-        supabase.table("tesouro_moedas").upsert(
-            {"campaign_id": camp, **novo}, on_conflict="campaign_id").execute()
-    except Exception as e:
-        print(f"ERRO MOEDAS: {e}")
-        raise HTTPException(500, "Erro ao ajustar as moedas")
-    return {"success": True, "data": novo}
+    return {"success": True, "data": movimentar("ajustar", req.model_dump())}
+
+
+@router.post("/dividir", dependencies=[Depends(exigir_mestre)])
+def dividir_moedas(req: DivisaoReq):
+    dados = req.model_dump(mode="json", exclude={"operacao_id"})
+    return movimentar("dividir", dados, req.operacao_id)
+
+
+@router.post("/entregar", dependencies=[Depends(exigir_mestre)])
+def entregar_item(req: EntregaReq):
+    dados = req.model_dump(mode="json", exclude={"operacao_id"})
+    return movimentar("entregar", dados, req.operacao_id)
 
 
 @router.post("")
@@ -82,18 +120,25 @@ def adicionar_item(req: ItemReq, user: dict = Depends(exigir_mestre)):
 
 
 @router.patch("/{item_id}", dependencies=[Depends(exigir_mestre)])
-def editar_item(item_id: str, req: ItemPatch):
+def editar_item(item_id: str, req: ItemPatch, quantidade_anterior: Optional[int] = None):
     dados = req.model_dump(exclude_none=True)
     if not dados:
         raise HTTPException(400, "Nada para alterar")
     if "nome" in dados:
         dados["nome"] = dados["nome"].strip()
     try:
-        r = (supabase.table("tesouro").update(dados)
-             .eq("id", item_id).eq("campaign_id", campanha_atual()).execute().data)
+        consulta = (
+            supabase.table("tesouro").update(dados)
+            .eq("id", item_id).eq("campaign_id", campanha_atual())
+        )
+        if quantidade_anterior is not None:
+            consulta = consulta.eq("quantidade", quantidade_anterior)
+        r = consulta.execute().data
     except Exception as e:
         print(f"ERRO EDITAR TESOURO: {e}")
         raise HTTPException(500, "Erro ao editar o item")
+    if not r and quantidade_anterior is not None:
+        raise HTTPException(409, "A quantidade mudou. Confira o tesouro atualizado.")
     if not r:
         raise HTTPException(404, "Item não encontrado")
     return {"success": True, "data": r[0]}

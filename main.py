@@ -34,6 +34,7 @@ from servicos import ocultar_cofre
 from core import _campanha_ctx, CAMPANHA_PADRAO, UUID_RE
 from imagens import TIPOS, LIMITE_BYTES, assinatura_ok
 from boatos_reputacao import pressoes_de_reputacao, fama_dos_personagens
+from postgrest.exceptions import APIError
 
 
 VELOCIDADE_KM_DIA = 40
@@ -398,6 +399,10 @@ async def update_character(character_id: str, req: UpdateCharacterRequest, user:
         response = supabase.table("characters").update(update_data).eq("id", character_id).execute()
         registrar_alteracoes(character_id, antigo.get("campaign_id"), user["sub"], antigo, update_data)
         return {"success": True, "data": response.data}
+    except APIError as e:
+        if e.code == "PT409":
+            raise HTTPException(409, e.message) from e
+        raise HTTPException(500, "Erro ao atualizar personagem.") from e
     except Exception as e:
         raise HTTPException(500, f"Erro ao atualizar personagem: {str(e)}")
 
@@ -455,7 +460,6 @@ async def level_up(request: Request, req: LevelUpRequest):
     if req.nivel_alvo > 20:
         raise HTTPException(400, "Nível máximo é 20")
 
-    # ← fora dos ifs agora
     class_name_alvo = getattr(req, 'class_name', None)
 
     if isinstance(ficha.get("classes"), list) and len(ficha["classes"]) > 1:
@@ -476,7 +480,6 @@ async def level_up(request: Request, req: LevelUpRequest):
             ficha["classes"][0]["level"] += 1
             ficha["total_level"] = ficha["classes"][0]["level"]
 
-    # Atualiza o level na ficha antes de mandar pra IA
     ficha["level"] = req.nivel_alvo
 
     arquetipo_txt = f"\nArquétipo escolhido AGORA para a classe {class_name_alvo}: {req.arquetipo} — adicione todas as features deste arquétipo." if req.arquetipo else f"\nArquétipo atual: {ficha.get('arquetipo', 'nenhum')}"
@@ -531,8 +534,8 @@ async def level_up(request: Request, req: LevelUpRequest):
         ficha_nova = gerar_json_com_gemini(prompt)
 
         campos_preservar = [
-    "background", "alignment", "background_story", "inventory", "xp", "classes", "name", "race",
-    "ideais", "vinculos", "defeitos", "objetivo_atual", "medos", "languages", "appearance"
+        "background", "alignment", "background_story", "inventory", "xp", "classes", "name", "race",
+        "ideais", "vinculos", "defeitos", "objetivo_atual", "medos", "languages", "appearance"
 ]
         for campo in campos_preservar:
             if campo in ficha and (campo not in ficha_nova or not ficha_nova[campo]):
@@ -548,12 +551,19 @@ async def level_up(request: Request, req: LevelUpRequest):
                 ficha_nova["arquetipos"][class_name_alvo] = req.arquetipo
             else:
                 ficha_nova["arquetipo"] = req.arquetipo
+        for campo in ("moedas", "inventory", "_tesouro_revisao"):
+            if campo in ficha:
+                ficha_nova[campo] = ficha[campo]
+            else:
+                ficha_nova.pop(campo, None)
         supabase.table("characters").update({
             "data": ficha_nova,
             "name": ficha_nova.get("name", ficha.get("name"))
         }).eq("id", req.character_id).execute()
         return {"success": True, "data": ficha_nova}
     except Exception as e:
+        if isinstance(e, APIError) and e.code == "PT409":
+            raise HTTPException(409, e.message) from e
         import traceback
         traceback.print_exc()
         raise HTTPException(500, "Erro ao processar level up")
