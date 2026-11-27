@@ -45,7 +45,25 @@ class EntregaReq(BaseModel):
     quantidade: int = Field(ge=1, le=9999)
     operacao_id: UUID
 
+class SaqueItemReq(BaseModel):
+    nome: str = Field(min_length=1, max_length=80)
+    quantidade: int = Field(default=1, ge=1, le=9999)
+    notas: str | None = Field(default=None, max_length=300)
 
+
+class SaqueMoedasReq(BaseModel):
+    cobre: int = Field(default=0, ge=0, le=1_000_000)
+    prata: int = Field(default=0, ge=0, le=1_000_000)
+    electro: int = Field(default=0, ge=0, le=1_000_000)
+    ouro: int = Field(default=0, ge=0, le=1_000_000)
+    platina: int = Field(default=0, ge=0, le=1_000_000)
+
+
+class SaqueReq(BaseModel):
+    operacao_id: UUID
+    origem: str = Field(min_length=1, max_length=160)
+    itens: list[SaqueItemReq] = Field(default_factory=list, max_length=30)
+    moedas: SaqueMoedasReq = Field(default_factory=SaqueMoedasReq)
 
 @router.get("")
 def ver_tesouro(user: dict = Depends(usuario_atual)):
@@ -118,6 +136,37 @@ def adicionar_item(req: ItemReq, user: dict = Depends(exigir_mestre)):
         raise HTTPException(500, "Erro ao adicionar o item")
     return {"success": True, "data": linha}
 
+@router.post("/saque")
+def receber_saque(req: SaqueReq, user: dict = Depends(exigir_mestre)):
+    origem = req.origem.strip()
+    itens = [
+        {
+            "nome": item.nome.strip(),
+            "quantidade": item.quantidade,
+            "notas": (item.notas or "").strip() or None,
+        }
+        for item in req.itens
+    ]
+    moedas = req.moedas.model_dump()
+
+    if not origem or any(not item["nome"] for item in itens):
+        raise HTTPException(400, "Preencha a origem e o nome dos itens.")
+    if not itens and not any(moedas.values()):
+        raise HTTPException(400, "Inclua itens ou moedas no saque.")
+
+    try:
+        return supabase.rpc("tesouro_receber_saque", {
+            "p_campanha": campanha_atual(),
+            "p_mestre": user["sub"],
+            "p_operacao": str(req.operacao_id),
+            "p_origem": origem,
+            "p_itens": itens,
+            "p_moedas": moedas,
+        }).execute().data
+    except APIError as e:
+        if e.code == "PT400":
+            raise HTTPException(400, e.message) from e
+        raise HTTPException(500, "Não foi possível enviar o saque ao Tesouro.") from e
 
 @router.patch("/{item_id}", dependencies=[Depends(exigir_mestre)])
 def editar_item(item_id: str, req: ItemPatch, quantidade_anterior: Optional[int] = None):
