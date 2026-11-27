@@ -4,6 +4,8 @@ from pydantic import BaseModel
 from core import supabase, campanha_atual
 from auth import dono_ou_mestre
 from fastapi import Depends
+from locais_util import indice_de_locais
+from routers.enciclopedia import _ja_reveladas, _npcs_por_local
 
 from auth import dono_ou_mestre, exigir_mestre
 
@@ -73,6 +75,34 @@ def diario_do_personagem(character_id: str):
         .order("registrado_em", desc=True)
         .limit(100).execute().data or []
     )
+
+    ids_npcs = {
+        str(item["entidade_id"]) for item in descobertas
+        if item["tipo"] == "npc"
+    }
+
+    if ids_npcs:
+        campanha = campanha_atual()
+        locais_publicos = {
+            entidade_id for tipo, entidade_id in _ja_reveladas(campanha)
+            if tipo == "local"
+        }
+        locais = (
+            supabase.table("locations").select("id,name")
+            .eq("campaign_id", campanha).execute().data or []
+        )
+        npcs_por_local = _npcs_por_local(
+            campanha, indice_de_locais(locais), ids_npcs, locais_publicos
+        )
+        pin_por_npc = {
+            local_id_npc["id"]: local_id
+            for local_id, npcs_do_pin in npcs_por_local.items()
+            for local_id_npc in npcs_do_pin
+        }
+
+        for item in descobertas:
+            if item["tipo"] == "npc":
+                item["local_id"] = pin_por_npc.get(item["entidade_id"])
 
     return {"success": True, "data": {
         "fatos": fatos,
