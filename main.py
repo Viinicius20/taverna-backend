@@ -28,7 +28,7 @@ from datetime import datetime
 from utils import limpar_texto
 from utils import MAXIMO
 from core import supabase, campanha_atual, limiter
-from routers import wiki, fatos, diario, tv, mundo_vivo, mundo_fisico, extras, publica, cofre, calendario, prazos, relacoes, npc_notas, sessao_zero, health, rolagens, tesouro, enciclopedia, lendas, faccao_notas, faccoes_atlas, bestiario_fotos, rumores
+from routers import wiki, fatos, diario, tv, mundo_vivo, mundo_fisico, extras, publica, cofre, calendario, prazos, relacoes, npc_notas, sessao_zero, health, rolagens, tesouro, enciclopedia, lendas, faccao_notas, faccoes_atlas, bestiario_fotos, rumores, encontros
 from auth import confere_senha, criar_token, hash_senha, exigir_mestre, MESTRE, usuario_atual, usuario_opcional, dono_ou_mestre, dono_da_lista, checar_campanha
 from servicos import ocultar_cofre
 from core import _campanha_ctx, CAMPANHA_PADRAO, UUID_RE
@@ -182,6 +182,7 @@ app.include_router(faccao_notas.router)
 app.include_router(faccoes_atlas.router)
 app.include_router(bestiario_fotos.router)
 app.include_router(rumores.router)
+app.include_router(encontros.router)
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 MODELOS_GEMINI = ["gemini-2.5-flash", "gemini-3.6-flash"]
