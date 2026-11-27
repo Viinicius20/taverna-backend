@@ -807,6 +807,12 @@ async def create_npc(campaign_id: str, description: str, system: str = "D&D 5e")
     - passive_perception
     - hit_dice
     - saving_throws (para os 6 atributos)
+    - Em combat.saving_throws, preencha os seis bônus finais de salvaguarda
+      conforme o sistema escolhido. Em D&D 5e, use o modificador do atributo
+      e some a proficiência apenas nas salvaguardas em que o NPC é proficiente.
+    - Em ataques, inclua os ataques que o NPC realmente usa. Cada ataque deve
+      ter nome, bônus de acerto inteiro e dano no formato 1d8+3.
+      Se o NPC não tiver ataques, retorne "ataques": [].
 
     Retorne APENAS um JSON válido:
     {{
@@ -827,6 +833,9 @@ async def create_npc(campaign_id: str, description: str, system: str = "D&D 5e")
         "passive_perception": 0,
         "hit_dice": "1d8",
         "saving_throws": {{ "str": 0, "dex": 0, "con": 0, "int": 0, "wis": 0, "cha": 0 }}
+        "ataques": [
+        {{ "nome": "Espada curta", "bonus": 4, "dano": "1d6+2" }}
+        ],
       }},
       "features": [],
       "inventory": [],
