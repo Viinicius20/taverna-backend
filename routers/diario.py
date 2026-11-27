@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from core import supabase, campanha_atual
@@ -66,8 +66,21 @@ def diario_do_personagem(character_id: str):
         .eq("campaign_id", campanha_atual()).order("session_number", desc=True).execute().data or []
     notas = supabase.table("diario_notas").select("session_number, texto") \
         .eq("character_id", character_id).execute().data or []
+    descobertas = (
+        supabase.table("diario_descobertas_visiveis")
+        .select("tipo,entidade_id,titulo,local_id,dia_total")
+        .eq("campaign_id", campanha_atual())
+        .order("registrado_em", desc=True)
+        .limit(100).execute().data or []
+    )
 
-    return {"success": True, "data": {"fatos": fatos, "npcs": npcs, "sessoes": sessoes, "notas": notas}}
+    return {"success": True, "data": {
+        "fatos": fatos,
+        "npcs": npcs,
+        "sessoes": sessoes,
+        "notas": notas,
+        "descobertas": descobertas,
+    }}
 
 
 @router.put("/diario/{character_id}/nota", dependencies=[Depends(dono_ou_mestre)])
